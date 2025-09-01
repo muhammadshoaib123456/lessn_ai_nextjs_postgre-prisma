@@ -1,0 +1,37 @@
+// Prisma + Postgres
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Presentation {
+  id                         Int      @id
+  slug                       String   @unique
+  name                       String
+  grade                      String
+  subject                    String
+  topic                      String?
+  sub_topic                  String?
+  thumbnail_alt_text         String?
+  thumbnail                  String?
+  presentation_content       String?
+  presentation_view_link     String
+  rating                     Float?
+  reviews                    Int?
+  download_ppt_url           String?
+  download_pdf_url           String?
+  slides_export_link_url     String?
+  meta_description           String?
+  meta_titles                String?
+  summary                    String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@index([subject])
+  @@index([grade])
+  @@index([topic])
+  @@index([sub_topic])
+}
