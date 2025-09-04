@@ -1,4 +1,3 @@
-// src/app/api/search/suggest/route.js
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -10,16 +9,14 @@ export async function GET(req) {
     return NextResponse.json({ items: [] });
   }
 
+  // Split into keywords; AND match in topic (case-insensitive)
+  const tokens = q.split(/\s+/).filter(Boolean).slice(0, 5);
+
   const items = await prisma.presentation.findMany({
     where: {
-      OR: [
-        { name: { contains: q, mode: "insensitive" } },
-        { subject: { contains: q, mode: "insensitive" } },
-        { grade: { contains: q, mode: "insensitive" } },
-        { topic: { contains: q, mode: "insensitive" } },
-        { sub_topic: { contains: q, mode: "insensitive" } },
-        { presentation_content: { contains: q, mode: "insensitive" } },
-      ],
+      AND: tokens.map((t) => ({
+        topic: { contains: t, mode: "insensitive" },
+      })),
     },
     select: {
       id: true,
@@ -31,7 +28,7 @@ export async function GET(req) {
       sub_topic: true,
       presentation_content: true,
     },
-    take: 8, // top 8 matches
+    take: 12, // fetch a few extra so client can pick top 4
   });
 
   const mapped = items.map((i) => ({
@@ -42,9 +39,7 @@ export async function GET(req) {
     grade: i.grade,
     topic: i.topic,
     subtopic: i.sub_topic,
-    snippet: i.presentation_content
-      ? i.presentation_content.slice(0, 120)
-      : "",
+    snippet: i.presentation_content ? i.presentation_content.slice(0, 200) : "",
   }));
 
   return NextResponse.json({ items: mapped });

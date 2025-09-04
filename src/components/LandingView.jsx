@@ -10,7 +10,7 @@ export default function LandingView() {
   return (
     <>
       {/* Allow hero dropdown/popup to render above the next sections */}
-      <section className="relative overflow-visible bg-gradient-to-b from-[#500078] to-[#9500DE] z-10 overflow-x-hidden">
+ <section className="relative z-50 overflow-visible bg-gradient-to-b from-[#500078] to-[#9500DE]">
         <div className="mx-auto max-w-100% min:h-[532px]">
           <div className="grid h-full grid-rows-[auto,1fr]">
             <HeroSection />

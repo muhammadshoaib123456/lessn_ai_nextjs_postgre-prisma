@@ -1,15 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
 
 // helpers
 const normalize = (s) => String(s || "").trim();
 const keyOf = (s) => normalize(s).toLowerCase();
+const csv = (arr) => (Array.isArray(arr) && arr.length ? arr.join(",") : "");
 
 export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply }) {
-  const router = useRouter();
-
   const [subjects, setSubjects] = useState([]); // [{id,name,count,checked}]
   const [grades, setGrades] = useState([]);     // [{id,name,count,checked}]
 
@@ -19,6 +17,15 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
   const [topicSearch, setTopicSearch] = useState("");
   const [subTopicSearch, setSubTopicSearch] = useState("");
 
+  // selected names
+  const selectedSubjectNames = useMemo(
+    () => subjects.filter((s) => s.checked).map((s) => s.name),
+    [subjects]
+  );
+  const selectedGradeNames = useMemo(
+    () => grades.filter((g) => g.checked).map((g) => g.name),
+    [grades]
+  );
   const selectedTopicNames = useMemo(
     () => topics.filter((t) => t.checked).map((t) => t.name),
     [topics]
@@ -28,7 +35,11 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
     [subTopics]
   );
 
-  // ===== open: hydrate subjects/grades defaults =====
+  // objects for chip rendering
+  const selectedTopicObjs = useMemo(() => topics.filter((t) => t.checked), [topics]);
+  const selectedSubTopicObjs = useMemo(() => subTopics.filter((s) => s.checked), [subTopics]);
+
+  /* ── 1) Load Subjects & Grades on open ───────── */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
@@ -49,7 +60,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
           subj.map((s) => {
             const name = String(s.name || "");
             return {
-              id: keyOf(name), // ← stable id
+              id: keyOf(name),
               name,
               count: Number(s.count || 0),
               checked: defSubjects.has(keyOf(name)),
@@ -61,7 +72,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
           grad.map((g) => {
             const name = String(g.name || "");
             return {
-              id: keyOf(name), // ← stable id
+              id: keyOf(name),
               name,
               count: Number(g.count || 0),
               checked: defGrades.has(keyOf(name)),
@@ -69,17 +80,15 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
           })
         );
       } catch (e) {
-        console.error("FilterPopup: /api/meta/filters failed", e);
+        console.error("FilterPopup: load /api/meta/filters failed", e);
       }
     })();
 
-    return () => {
-      aborted = true;
-    };
+    return () => { aborted = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, JSON.stringify(defaults)]);
 
-  // ===== topics (merge selection; stable ids) =====
+  /* ── 2) Load Topics when: open, Subject/Grade change, Topic search change ───── */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
@@ -90,7 +99,12 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
     (async () => {
       try {
         const url = new URL("/api/meta/topics", window.location.origin);
+        const subjCsv = csv(selectedSubjectNames);
+        const gradeCsv = csv(selectedGradeNames);
+        if (subjCsv) url.searchParams.set("subjects", subjCsv);
+        if (gradeCsv) url.searchParams.set("grades", gradeCsv);
         if (topicSearch.trim()) url.searchParams.set("q", topicSearch.trim());
+
         const r = await fetch(url.toString(), { cache: "no-store" });
         const arr = (await r.json()) || []; // [{name,count}]
         if (aborted) return;
@@ -101,36 +115,39 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
             .map((t) => {
               const name = String(t.name || "");
               const id = keyOf(name);
-              const checked = defTopics.has(id) || prevChecked.get(id) === true;
-              return { id, name, count: Number(t.count || 0), checked };
+              const wasChecked = prevChecked.get(id) === true;
+              const isDefault = defTopics.has(id);
+              return { id, name, count: Number(t.count || 0), checked: wasChecked || isDefault };
             })
             .filter((t) => t.name.trim());
         });
       } catch (e) {
         console.warn("FilterPopup: /api/meta/topics failed", e);
-        if (!aborted) setTopics((prev) => prev); // keep existing on error
       }
     })();
 
-    return () => {
-      aborted = true;
-    };
-  }, [isOpen, topicSearch, JSON.stringify(defaults)]);
+    return () => { aborted = true; };
+  }, [isOpen, JSON.stringify(selectedSubjectNames), JSON.stringify(selectedGradeNames), topicSearch, JSON.stringify(defaults)]);
 
-  // ===== subtopics (refetch when selected topics change; merge selection) =====
+  /* ── 3) Load Sub-Topics when: open, Topics/Subject/Grade change, SubTopic search ─ */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
 
     const def = typeof defaults === "object" ? defaults : {};
     const defSubs = new Set([...(def.sub_topics || []), def.subtopic].filter(Boolean).map(keyOf));
-    const selected = selectedTopicNames;
 
     (async () => {
       try {
         const url = new URL("/api/meta/subtopics", window.location.origin);
-        if (selected.length) url.searchParams.set("topics", selected.join(","));
+        const topicsCsv = csv(selectedTopicNames);
+        const subjCsv = csv(selectedSubjectNames);
+        const gradeCsv = csv(selectedGradeNames);
+        if (topicsCsv) url.searchParams.set("topics", topicsCsv);
+        if (subjCsv) url.searchParams.set("subjects", subjCsv);
+        if (gradeCsv) url.searchParams.set("grades", gradeCsv);
         if (subTopicSearch.trim()) url.searchParams.set("q", subTopicSearch.trim());
+
         const r = await fetch(url.toString(), { cache: "no-store" });
         const arr = (await r.json()) || []; // [{name,count}]
         if (aborted) return;
@@ -141,95 +158,59 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
             .map((s) => {
               const name = String(s.name || "");
               const id = keyOf(name);
-              const checked = defSubs.has(id) || prevChecked.get(id) === true;
-              return { id, name, count: Number(s.count || 0), checked };
+              const wasChecked = prevChecked.get(id) === true;
+              const isDefault = defSubs.has(id);
+              return { id, name, count: Number(s.count || 0), checked: wasChecked || isDefault };
             })
             .filter((s) => s.name.trim());
         });
       } catch (e) {
         console.warn("FilterPopup: /api/meta/subtopics failed", e);
-        if (!aborted) setSubTopics((prev) => prev);
       }
     })();
 
-    return () => {
-      aborted = true;
-    };
-  }, [isOpen, JSON.stringify(selectedTopicNames), subTopicSearch, JSON.stringify(defaults)]);
-
-  // ===== body scroll lock (unchanged) =====
-  useEffect(() => {
-    const body = document.body;
-    const lock = () => {
-      const scrollY = window.scrollY || window.pageYOffset;
-      body.setAttribute("data-scroll-lock-y", String(scrollY));
-      body.style.position = "fixed";
-      body.style.top = `-${scrollY}px`;
-      body.style.left = "0";
-      body.style.right = "0";
-      body.style.width = "100%";
-      body.style.overflow = "hidden";
-      const hasScrollbar = window.innerWidth > document.documentElement.clientWidth;
-      if (hasScrollbar) {
-        const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-        body.style.paddingRight = `${scrollbarWidth}px`;
-      }
-    };
-    const unlock = () => {
-      const y = Number(body.getAttribute("data-scroll-lock-y") || "0");
-      body.style.position = "";
-      body.style.top = "";
-      body.style.left = "";
-      body.style.right = "";
-      body.style.width = "";
-      body.style.overflow = "";
-      body.style.paddingRight = "";
-      body.removeAttribute("data-scroll-lock-y");
-      window.scrollTo(0, y);
-    };
-    if (isOpen) {
-      lock();
-      return () => unlock();
-    } else {
-      const t = setTimeout(() => {
-        if (document.body.style.position === "fixed") unlock();
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [isOpen]);
+    return () => { aborted = true; };
+  }, [
+    isOpen,
+    JSON.stringify(selectedTopicNames),
+    JSON.stringify(selectedSubjectNames),
+    JSON.stringify(selectedGradeNames),
+    subTopicSearch,
+    JSON.stringify(defaults),
+  ]);
 
   if (!isOpen) return null;
 
-  // ===== helpers =====
+  // toggles
   const toggleChecked = (id, type) => {
     if (type === "subject") {
       setSubjects((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
     } else if (type === "grade") {
       setGrades((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
     }
+    // Topics/Subtopics refetch automatically via effects
   };
+  const toggleTopic = (id) => setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
+  const toggleSubTopic = (id) => setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
 
-  const toggleTopic = (id) => {
-    setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
-  };
-
-  const toggleSubTopic = (id) => {
-    setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
-  };
+  // remove buttons on chips (explicit uncheck)
+  const removeTopic = (id) =>
+    setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
+  const removeSubTopic = (id) =>
+    setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
 
   const selectAll = (type) => {
     if (type === "topics") setTopics((prev) => prev.map((it) => ({ ...it, checked: true })));
     if (type === "subtopics") setSubTopics((prev) => prev.map((it) => ({ ...it, checked: true })));
   };
-
   const clearAll = (type) => {
     if (type === "topics") setTopics((prev) => prev.map((it) => ({ ...it, checked: false })));
     if (type === "subtopics") setSubTopics((prev) => prev.map((it) => ({ ...it, checked: false })));
   };
 
   const handleApply = () => {
-    const selectedSubjects = subjects.filter((s) => s.checked).map((s) => s.name);
-    const selectedGrades = grades.filter((g) => g.checked).map((g) => g.name);
+    const selectedSubjects = selectedSubjectNames;
+    const selectedGrades = selectedGradeNames;
     const selectedTopics = selectedTopicNames;
     const selectedSubs = selectedSubTopicNames;
 
@@ -238,14 +219,14 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
       grades: selectedGrades,
       topics: selectedTopics,
       sub_topics: selectedSubs,
-      // single-value fallbacks (first selected) for backward compatibility
+      // single-value fallbacks for backward compatibility
       topic: selectedTopics[0] || "",
       subtopic: selectedSubs[0] || "",
     });
     onClose?.();
   };
 
-  // ===== UI =====
+  /* ======================= UI ======================= */
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" aria-modal="true" role="dialog">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
@@ -256,12 +237,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
         {/* Header */}
         <div className="flex justify-between items-center bg-purple-700 px-4 py-2 rounded-t-lg">
           <h2 className="text-white text-sm font-semibold">Select Filter</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-white text-lg font-bold hover:text-gray-200"
-            aria-label="Close filter popup"
-          >
+          <button type="button" onClick={onClose} className="text-white text-lg font-bold hover:text-gray-200" aria-label="Close filter popup">
             ✕
           </button>
         </div>
@@ -274,12 +250,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
             <div className="grid grid-cols-3 gap-2">
               {subjects.map((subject) => (
                 <label key={subject.id} className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={subject.checked}
-                    onChange={() => toggleChecked(subject.id, "subject")}
-                    className="hidden"
-                  />
+                  <input type="checkbox" checked={subject.checked} onChange={() => toggleChecked(subject.id, "subject")} className="hidden" />
                   <span
                     className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${
                       subject.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400 text-transparent"
@@ -305,12 +276,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {grades.map((grade) => (
                 <label key={grade.id} className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={grade.checked}
-                    onChange={() => toggleChecked(grade.id, "grade")}
-                    className="hidden"
-                  />
+                  <input type="checkbox" checked={grade.checked} onChange={() => toggleChecked(grade.id, "grade")} className="hidden" />
                   <span
                     className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${
                       grade.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400"
@@ -337,12 +303,8 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               <div className="flex items-center justify-between mb-2">
                 <div className="font-medium text-gray-700">Topics</div>
                 <div className="space-x-2">
-                  <button type="button" onClick={() => selectAll("topics")} className="text-purple-700 hover:underline">
-                    Select all
-                  </button>
-                  <button type="button" onClick={() => clearAll("topics")} className="text-gray-600 hover:underline">
-                    Clear
-                  </button>
+                  <button type="button" onClick={() => selectAll("topics")} className="text-purple-700 hover:underline">Select all</button>
+                  <button type="button" onClick={() => clearAll("topics")} className="text-gray-600 hover:underline">Clear</button>
                 </div>
               </div>
 
@@ -354,15 +316,28 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                 className="w-full mb-2 border border-gray-300 rounded-md px-2 py-1"
               />
 
-              {/* Chips of selected */}
-              {selectedTopicNames.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {selectedTopicNames.map((t) => (
+              {/* Chips */}
+              {selectedTopicObjs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {selectedTopicObjs.map((t) => (
                     <span
-                      key={t}
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-purple-100 text-purple-700 border border-purple-200"
+                      key={t.id}
+                      title={t.name}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors"
                     >
-                      {t}
+                      <span className="truncate max-w-[180px]">{t.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${t.name}`}
+                        onClick={(e) => { e.stopPropagation(); removeTopic(t.id); }}
+                        className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-purple-600 text-white hover:bg-purple-700
+                                   focus:outline-none focus:ring-2 focus:ring-purple-300 focus:ring-offset-1 transition-colors"
+                        title="Remove"
+                      >
+                        <svg viewBox="0 0 14 14" width="10" height="10" aria-hidden="true">
+                          <path d="M3 3l8 8M11 3L3 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                        </svg>
+                      </button>
                     </span>
                   ))}
                 </div>
@@ -372,12 +347,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               <div className="max-h-32 overflow-auto border border-gray-200 rounded-md p-2">
                 {topics.map((t) => (
                   <label key={t.id} className="flex items-center gap-2 py-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={t.checked}
-                      onChange={() => toggleTopic(t.id)}
-                      className="h-4 w-4"
-                    />
+                    <input type="checkbox" checked={t.checked} onChange={() => toggleTopic(t.id)} className="h-4 w-4" />
                     <span className="flex-1 text-gray-700">{t.name}</span>
                     <span className="text-gray-500">({t.count})</span>
                   </label>
@@ -391,12 +361,8 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               <div className="flex items-center justify-between mb-2">
                 <div className="font-medium text-gray-700">Sub-Topics</div>
                 <div className="space-x-2">
-                  <button type="button" onClick={() => selectAll("subtopics")} className="text-purple-700 hover:underline">
-                    Select all
-                  </button>
-                  <button type="button" onClick={() => clearAll("subtopics")} className="text-gray-600 hover:underline">
-                    Clear
-                  </button>
+                  <button type="button" onClick={() => selectAll("subtopics")} className="text-purple-700 hover:underline">Select all</button>
+                  <button type="button" onClick={() => clearAll("subtopics")} className="text-gray-600 hover:underline">Clear</button>
                 </div>
               </div>
 
@@ -408,15 +374,28 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                 className="w-full mb-2 border border-gray-300 rounded-md px-2 py-1"
               />
 
-              {/* Chips of selected */}
-              {selectedSubTopicNames.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {selectedSubTopicNames.map((s) => (
+              {/* Chips */}
+              {selectedSubTopicObjs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {selectedSubTopicObjs.map((s) => (
                     <span
-                      key={s}
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-green-100 text-green-700 border border-green-200"
+                      key={s.id}
+                      title={s.name}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors"
                     >
-                      {s}
+                      <span className="truncate max-w-[180px]">{s.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${s.name}`}
+                        onClick={(e) => { e.stopPropagation(); removeSubTopic(s.id); }}
+                        className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-white hover:bg-purple-700
+                                   focus:outline-none focus:ring-2 focus:ring-purple-300 focus:ring-offset-1 transition-colors"
+                        title="Remove"
+                      >
+                        <svg viewBox="0 0 14 14" width="10" height="10" aria-hidden="true">
+                          <path d="M3 3l8 8M11 3L3 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                        </svg>
+                      </button>
                     </span>
                   ))}
                 </div>
@@ -426,12 +405,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               <div className="max-h-32 overflow-auto border border-gray-200 rounded-md p-2">
                 {subTopics.map((s) => (
                   <label key={s.id} className="flex items-center gap-2 py-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={s.checked}
-                      onChange={() => toggleSubTopic(s.id)}
-                      className="h-4 w-4"
-                    />
+                    <input type="checkbox" checked={s.checked} onChange={() => toggleSubTopic(s.id)} className="h-4 w-4" />
                     <span className="flex-1 text-gray-700">{s.name}</span>
                     <span className="text-gray-500">({s.count})</span>
                   </label>
