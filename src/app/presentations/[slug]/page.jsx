@@ -1,8 +1,10 @@
 // app/presentations/[slug]/page.jsx
-
-// (optional but recommended if you rely on no-store or per-request data)
+import Header from "@/components/Header";
+import Footer from "@/components/Footer";
+import TeacherSectionClient from "@/components/TeacherSectionClient";
 export const dynamic = "force-dynamic";
 
+// ---- data fetchers ----
 async function getData(slug) {
   const base = process.env.NEXT_PUBLIC_BASE_URL || "";
   const url = `${base}/api/presentations/${slug}`;
@@ -11,77 +13,171 @@ async function getData(slug) {
   return res.json();
 }
 
+async function getAllPresentations() {
+  const base = process.env.NEXT_PUBLIC_BASE_URL || "";
+  const pageSize = 1000;
+  let page = 1;
+  const all = [];
+  const MAX_PAGES = 1000000;
+
+  while (page <= MAX_PAGES) {
+    const res = await fetch(`${base}/api/presentations/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        q: "",
+        subjects: [],
+        grades: [],
+        page,
+        pageSize,
+      }),
+    });
+
+    if (!res.ok) break;
+    const json = await res.json();
+    const items = Array.isArray(json?.items) ? json.items : [];
+    all.push(...items);
+
+    if (items.length < pageSize) break;
+    page += 1;
+  }
+  return all;
+}
+
+// ---- metadata ----
 export async function generateMetadata({ params }) {
-  const { slug } = await params; // ✅ await params
+  const { slug } = await params;
   const p = await getData(slug);
   if (!p) return {};
   return {
     title: p.meta_titles || p.name,
-    description: p.meta_description || [p.subject, p.grade, p.topic].filter(Boolean).join(" • "),
+    description:
+      p.meta_description ||
+      [p.subject, p.grade, p.topic].filter(Boolean).join(" • "),
   };
 }
 
-export default async function PresentationPage({ params }) {
-  const { slug } = await params; // ✅ await params
-  const p = await getData(slug);
-  if (!p) {
-    return <div className="max-w-[960px] mx-auto p-6">Not found</div>;
-  }
+// ---- sanitization helpers ----
+import DOMPurify from "isomorphic-dompurify";
 
-  // 🔹 Extract clean embed URL for iframe
+function decodeEntities(s = "") {
+  return String(s)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+function prepareHtml(html) {
+  const decoded = decodeEntities(html)
+    .replace(/<span>\s*\|\s*<\/span>/g, "<br/>")
+    .replace(/<div>\s*<\/div>/g, "");
+  return DOMPurify.sanitize(decoded, { USE_PROFILES: { html: true } });
+}
+
+// ---- page ----
+export default async function PresentationPage({ params }) {
+  const { slug } = await params;
+  const p = await getData(slug);
+  if (!p) return <div className="max-w-[960px] mx-auto p-6">Not found</div>;
+
+  const all = await getAllPresentations();
+  const sliderItems = all.filter((it) => it?.slug !== p.slug);
+
+  // Build embed URL
   let embedUrl = "";
   if (p.presentation_view_link) {
-    // If DB/CSV stored full iframe HTML snippet, pull the src out
-    const srcMatch = String(p.presentation_view_link).match(/src="([^"]+)"/);
-    embedUrl = srcMatch ? srcMatch[1] : p.presentation_view_link;
+    const m = String(p.presentation_view_link).match(/src="([^"]+)"/i);
+    embedUrl = m ? m[1] : String(p.presentation_view_link);
   }
   if (!embedUrl && p.slides_export_link_url) {
-    // Construct embed URL from Google Slides export link
-    const googleIdMatch = String(p.slides_export_link_url).match(/presentation\/d\/([^/]+)/);
-    if (googleIdMatch) {
-      const presId = googleIdMatch[1];
-      embedUrl = `https://docs.google.com/presentation/d/${presId}/embed?slide=id.p`;
-    }
+    const m = String(p.slides_export_link_url).match(/presentation\/d\/([^/]+)/i);
+    if (m) embedUrl = `https://docs.google.com/presentation/d/${m[1]}/embed?slide=id.p`;
   }
 
+  const summaryHtml = p.summary ? prepareHtml(p.summary) : "";
+  const contentHtml = p.presentation_content ? prepareHtml(p.presentation_content) : "";
+
   return (
-    <div className="max-w-[1100px] mx-auto px-4 py-8">
-      {/* Metadata info */}
-      <div className="text-sm text-gray-500 mb-2">
-        Subject: <span className="font-medium">{p.subject}</span>&nbsp;&nbsp;
-        Grade: <span className="font-medium">{p.grade}</span>&nbsp;&nbsp;
-        Topic: <span className="font-medium">{p.topic || "-"}</span>
-      </div>
+    <>
+      <Header />
 
-      {/* Title */}
-      <h1 className="text-3xl md:text-4xl font-bold mb-4">{p.name}</h1>
+      {/* Main content */}
+      <div className="max-w-[1100px] mx-auto px-4 py-8">
+        {/* Title */}
+        <h1 className="text-3xl md:text-4xl font-bold leading-snug mb-4">
+          {p.name}
+        </h1>
 
-      {/* iFrame Section */}
-      <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden">
-        {embedUrl ? (
-          <iframe
-            src={embedUrl}
-            title={p.name}
-            className="w-full h-full"
-            frameBorder="0"
-            // React's canonical fullscreen prop is allowFullScreen (camelCase)
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        ) : (
-          <p className="p-4 text-center text-gray-500">
-            Presentation preview is not available.
-          </p>
-        )}
-      </div>
-
-      {/* Details Section */}
-      <details className="mt-6 bg-gray-50 rounded-lg p-4">
-        <summary className="cursor-pointer font-semibold">Show details</summary>
-        <div className="mt-3 text-sm leading-6">
-          {p.presentation_content || p.summary || "No additional details."}
+        {/* Subject/Grade/Topic */}
+        <div className="text-base md:text-lg text-gray-700 mb-8">
+          <span className="font-bold text-black">Subject:</span>{" "}
+          <span className="font-medium">{p.subject}</span>
+          <span className="mx-3"> </span>
+          <span className="font-bold text-black">Grade:</span>{" "}
+          <span className="font-medium">{p.grade}</span>
+          <span className="mx-3"> </span>
+          <span className="font-bold text-black">Topic:</span>{" "}
+          <span className="font-medium">{p.topic || "-"}</span>
         </div>
-      </details>
-    </div>
+
+        {/* Iframe smaller + no black bars */}
+        <div className="mx-auto max-w-[800px] w-full">
+          <div className="aspect-video bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+            {embedUrl ? (
+              <iframe
+                src={embedUrl}
+                title={p.name}
+                className="w-full h-full"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            ) : (
+              <p className="p-4 text-center text-gray-500">
+                Presentation preview is not available.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* View More Content */}
+      <section className="w-full px-4 sm:px-6 lg:px-12 py-10 bg-white">
+        <TeacherSectionClient
+          items={sliderItems}
+          title="View More Content"
+          showCTA={false}
+        />
+      </section>
+
+      {/* Details */}
+      <div className="max-w-[1100px] mx-auto px-4 pb-10">
+        <details className="bg-gray-50 rounded-lg p-5">
+          <summary className="cursor-pointer font-semibold text-lg">
+            Show Details
+          </summary>
+
+          {summaryHtml && (
+            <div
+              className="mt-4 text-sm md:text-base leading-6"
+              dangerouslySetInnerHTML={{ __html: summaryHtml }}
+            />
+          )}
+
+          {contentHtml && (
+            <div
+              className="mt-6 text-sm md:text-base leading-6"
+              dangerouslySetInnerHTML={{ __html: contentHtml }}
+            />
+          )}
+        </details>
+      </div>
+
+      <Footer />
+    </>
   );
 }

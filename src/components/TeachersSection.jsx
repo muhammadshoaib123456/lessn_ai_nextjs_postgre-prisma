@@ -1,9 +1,8 @@
 // components/TeacherSection.jsx
 import { prisma } from "@/lib/prisma";
-import TeacherSectionClient from "./TeacherSectionClient";
+import TeacherSectionClient from "@/components/TeacherSectionClient";
 
 export default async function TeacherSection() {
-  // Fetch ALL rows without limit, no unstable_cache
   const items = await prisma.presentation.findMany({
     orderBy: { id: "desc" },
     select: {
@@ -16,14 +15,18 @@ export default async function TeacherSection() {
       sub_topic: true,
       thumbnail: true,
       thumbnail_alt_text: true,
-      // ⚠️ Skip heavy fields like presentation_content unless really needed
     },
   });
 
-  const normalized = items.map((r) => ({
-    ...r,
-    subtopic: r.sub_topic ?? null,
-  }));
+  const normalized = items.map((r) => ({ ...r, subtopic: r.sub_topic ?? null }));
 
-  return <TeacherSectionClient items={normalized} />;
+  return (
+    <div className="pl-6">
+    <TeacherSectionClient
+      items={normalized}
+      // fixed size & spacing
+          // leave right side without padding so last card peeks
+    />
+    </div>
+  );
 }

@@ -1,20 +1,20 @@
-// components/Header.jsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import HelpPopup from "@/components/HelpPopup";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const Header = () => {
-  // ===== UI state (kept from your old header) =====
+  // ===== UI state =====
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // ===== New data state (from the new header) =====
-  const [grades, setGrades] = useState([]);   // [{ name, count }]
-  const [subjects, setSubjects] = useState([]); // [{ name, count }]
+  // ===== Data (APIs return [{ name, count }]) =====
+  const [grades, setGrades] = useState([]);
+  const [subjects, setSubjects] = useState([]);
 
-  // Desktop hover dropdowns
+  // Desktop dropdown visibility
   const [showGradesDesktop, setShowGradesDesktop] = useState(false);
   const [showSubjectsDesktop, setShowSubjectsDesktop] = useState(false);
 
@@ -22,22 +22,22 @@ const Header = () => {
   const [showGradesMobile, setShowGradesMobile] = useState(false);
   const [showSubjectsMobile, setShowSubjectsMobile] = useState(false);
 
+  const router = useRouter();
+
   // ===== Fetch dropdown data once =====
   useEffect(() => {
-    // subjects with counts
     fetch("/api/meta/subjects", { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => (Array.isArray(data) ? setSubjects(data) : setSubjects([])))
       .catch(() => setSubjects([]));
 
-    // grades with counts
     fetch("/api/meta/grades", { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => (Array.isArray(data) ? setGrades(data) : setGrades([])))
       .catch(() => setGrades([]));
   }, []);
 
-  // ===== Lock body scroll when drawer is open =====
+  // ===== Lock body scroll for drawer =====
   useEffect(() => {
     document.body.style.overflow = menuOpen ? "hidden" : "";
     return () => {
@@ -47,15 +47,83 @@ const Header = () => {
 
   const closeMenu = () => setMenuOpen(false);
 
+  // ===== Desktop dropdown timing (match HeroSection) =====
+  const LEAVE_CLOSE_MS = 500;
+  const gradeCloseRef = useRef(null);
+  const subjectCloseRef = useRef(null);
+
+  const clearGradeClose = () => {
+    if (gradeCloseRef.current) {
+      clearTimeout(gradeCloseRef.current);
+      gradeCloseRef.current = null;
+    }
+  };
+  const clearSubjectClose = () => {
+    if (subjectCloseRef.current) {
+      clearTimeout(subjectCloseRef.current);
+      subjectCloseRef.current = null;
+    }
+  };
+
+  const openGradesMenu = () => {
+    // close Subjects immediately when entering Grades
+    clearSubjectClose();
+    setShowSubjectsDesktop(false);
+    // open Grades (cancel any pending close)
+    clearGradeClose();
+    setShowGradesDesktop(true);
+  };
+  const openSubjectsMenu = () => {
+    // close Grades immediately when entering Subjects
+    clearGradeClose();
+    setShowGradesDesktop(false);
+    // open Subjects (cancel any pending close)
+    clearSubjectClose();
+    setShowSubjectsDesktop(true);
+  };
+  const leaveGradesMenu = () => {
+    clearGradeClose();
+    gradeCloseRef.current = setTimeout(
+      () => setShowGradesDesktop(false),
+      LEAVE_CLOSE_MS
+    );
+  };
+  const leaveSubjectsMenu = () => {
+    clearSubjectClose();
+    subjectCloseRef.current = setTimeout(
+      () => setShowSubjectsDesktop(false),
+      LEAVE_CLOSE_MS
+    );
+  };
+
+  useEffect(() => {
+    return () => {
+      clearGradeClose();
+      clearSubjectClose();
+    };
+  }, []);
+
+  // Desktop click handlers (navigate with query params)
+  const onClickGrade = (name) => {
+    clearGradeClose();
+    setShowGradesDesktop(false);
+    router.push(`/explore-library?grades=${encodeURIComponent(name)}`);
+  };
+  const onClickSubject = (name) => {
+    clearSubjectClose();
+    setShowSubjectsDesktop(false);
+    router.push(`/explore-library?subjects=${encodeURIComponent(name)}`);
+  };
+
   return (
     <>
       <header className="w-full bg-gradient-to-r from-[#500078] to-[#9500DE] text-white pl-3 pr-3">
         <div className="max-w-[1366px] mx-auto flex items-center justify-between px-6 lg:px-12 py-5 relative">
-          {/* LEFT: Logo (kept exactly) */}
+          {/* LEFT: Logo */}
           <div className="flex items-center space-x-2 z-50">
             <Link href="/">
-              {/* your SVG logo unchanged */}
-              <svg width="108" height="36" viewBox="0 0 108 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {/* (Logo SVG left as-is) */}
+               <svg width="108" height="36" viewBox="0 0 108 36" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M104.688 16.7434C104.688 13.9164 103.148 12.4614 100.826 12.4614C98.4746 12.4614 96.9356 13.9164 96.9356 16.7434V25.3624H93.7456V9.94241H96.9356V11.7054C97.9706 10.4464 99.6776 9.69141 101.526 9.69141C105.135 9.69141 107.849 11.9584 107.849 16.2674V25.3624H104.688V16.7434Z" fill="white"/>
                 <path d="M84.3984 25.6144C80.7044 25.6144 78.1014 23.4314 77.9614 20.6334H81.2634C81.3764 21.8924 82.5794 22.9274 84.3424 22.9274C86.1894 22.9274 87.1684 22.1444 87.1684 21.0804C87.1684 18.0584 78.2134 19.7934 78.2134 14.1404C78.2134 11.6774 80.5084 9.69043 84.1464 9.69043C87.6444 9.69043 89.9384 11.5664 90.1064 14.6444H86.9174C86.8044 13.3014 85.7694 12.3774 84.0354 12.3774C82.3284 12.3774 81.4314 13.0774 81.4314 14.1124C81.4314 17.2184 90.1354 15.4844 90.3024 21.0524C90.3024 23.6554 88.0354 25.6144 84.3984 25.6144Z" fill="white"/>
                 <path d="M69.4541 25.6144C65.7601 25.6144 63.1581 23.4314 63.0171 20.6334H66.3201C66.4331 21.8924 67.6351 22.9274 69.3981 22.9274C71.2451 22.9274 72.2251 22.1444 72.2251 21.0804C72.2251 18.0584 63.2701 19.7934 63.2701 14.1404C63.2701 11.6774 65.5641 9.69043 69.2021 9.69043C72.7001 9.69043 74.9951 11.5664 75.1641 14.6444H71.9731C71.8611 13.3014 70.8261 12.3774 69.0911 12.3774C67.3841 12.3774 66.4881 13.0774 66.4881 14.1124C66.4881 17.2184 75.1911 15.4844 75.3591 21.0524C75.3591 23.6554 73.0931 25.6144 69.4541 25.6144Z" fill="white"/>
@@ -72,7 +140,7 @@ const Header = () => {
             </Link>
           </div>
 
-          {/* Desktop Nav (kept layout; added working dropdowns) */}
+          {/* Desktop Nav */}
           <nav className="hidden lg:flex items-center pl-4 gap-x-9 text-[14px]">
             <Link href="/explore-library" className="rounded-md hover:text-gray-300 cursor-pointer">
               Explore Library
@@ -81,64 +149,82 @@ const Header = () => {
               Create a Lesson
             </Link>
 
-            {/* Select Grade (hover to open) */}
+            {/* Select Grade */}
             <div
               className="relative hover:text-gray-300 cursor-pointer"
-              onMouseEnter={() => setShowGradesDesktop(true)}
-              onMouseLeave={() => setShowGradesDesktop(false)}
+              onMouseEnter={openGradesMenu}
+              onMouseLeave={leaveGradesMenu}
             >
               <div className="flex items-center space-x-1">
                 <span>Select Grade</span>
                 <svg width="11" height="6" viewBox="0 0 11 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
               {showGradesDesktop && (
-                <div className="absolute left-0 mt-2 w-56 bg-white text-gray-800 rounded-md shadow-lg z-50">
-                  {grades.map((g) => (
-                    <Link
-                      key={g.name}
-                      href={`/explore-library?grade=${encodeURIComponent(g.name)}`}
-                      className="block px-4 py-2 hover:bg-gray-100"
+                <ul className="absolute left-0 top-full mt-1 w-48 bg-gray-800 rounded-md shadow-lg z-50">
+                  {(grades?.length
+                    ? grades.map((g) => g.name)
+                    : [
+                        "Pre-K",
+                        "Kindergarten",
+                        "First Grade",
+                        "Second Grade",
+                        "Third Grade",
+                        "Fourth Grade",
+                        "Fifth Grade",
+                        "Sixth Grade",
+                        "Seventh Grade",
+                        "Eighth Grade",
+                        "High School",
+                      ]
+                  ).map((grade, idx) => (
+                    <li
+                      key={idx}
+                      className="px-4 py-2 text-white border-b border-gray-700 last:border-none hover:bg-[#9500DE] cursor-pointer"
+                      onClick={() => onClickGrade(grade)}
                     >
-                      {g.name} ({g.count})
-                    </Link>
+                      {grade}
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </div>
 
-            {/* Select Subject (hover to open) */}
+            {/* Select Subject */}
             <div
               className="relative hover:text-gray-300 cursor-pointer"
-              onMouseEnter={() => setShowSubjectsDesktop(true)}
-              onMouseLeave={() => setShowSubjectsDesktop(false)}
+              onMouseEnter={openSubjectsMenu}
+              onMouseLeave={leaveSubjectsMenu}
             >
               <div className="flex items-center space-x-1">
                 <span>Select Subject</span>
                 <svg width="11" height="6" viewBox="0 0 11 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
               {showSubjectsDesktop && (
-                <div className="absolute left-0 mt-2 w-56 bg-white text-gray-800 rounded-md shadow-lg z-50">
-                  {subjects.map((s) => (
-                    <Link
-                      key={s.name}
-                      href={`/explore-library?subject=${encodeURIComponent(s.name)}`}
-                      className="block px-4 py-2 hover:bg-gray-100"
+                <ul className="absolute left-0 top-full mt-1 w-48 bg-gray-800 rounded-md shadow-lg z-50">
+                  {(subjects?.length
+                    ? subjects.map((s) => s.name)
+                    : ["Language arts", "Math", "Science", "Social Studies"]
+                  ).map((subject, idx) => (
+                    <li
+                      key={idx}
+                      className="px-4 py-2 text-white border-b border-gray-700 last:border-none hover:bg-[#9500DE] cursor-pointer"
+                      onClick={() => onClickSubject(subject)}
                     >
-                      {s.name} ({s.count})
-                    </Link>
+                      {subject}
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </div>
           </nav>
 
-          {/* RIGHT: Auth + Hamburger (kept) */}
+          {/* RIGHT: Auth + Hamburger */}
           <div className="flex items-center gap-4 z-50">
-            {/* Auth (md+) */}
+            {/* Auth Links */}
             <div className="hidden md:flex items-center space-x-6 text-[14px]">
               <Link href="/login" className="flex items-center space-x-1 hover:text-gray-300">
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -156,8 +242,6 @@ const Header = () => {
                 </svg>
                 <span>Sign up</span>
               </Link>
-
-              {/* Help (lg+) */}
               <div className="hidden lg:flex items-center">
                 <img
                   src="/Help.svg"
@@ -168,7 +252,7 @@ const Header = () => {
               </div>
             </div>
 
-            {/* Hamburger (sm & md only) */}
+            {/* Hamburger Menu */}
             <button
               aria-label="Open menu"
               aria-expanded={menuOpen}
@@ -202,7 +286,7 @@ const Header = () => {
             onClick={closeMenu}
           />
 
-          {/* Drawer (mobile) */}
+          {/* Drawer (mobile menu) */}
           <aside
             id="mobile-drawer"
             className={`fixed top-0 right-0 h-full bg-[#500078] text-white z-50 transition-transform duration-300 w-full md:w-1/2 ${
@@ -234,21 +318,47 @@ const Header = () => {
                 onClick={() => setShowGradesMobile((v) => !v)}
               >
                 <span>Grades</span>
-                <svg width="11" height="6" viewBox="0 0 11 6" fill="none" xmlns="http://www.w3.org/2000/svg"
-                  className={`${showGradesMobile ? "rotate-180" : ""} transition-transform`}>
-                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round"/>
+                <svg
+                  width="11"
+                  height="6"
+                  viewBox="0 0 11 6"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className={`${showGradesMobile ? "rotate-180" : ""} transition-transform`}
+                >
+                  <path
+                    d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619"
+                    stroke="white"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </button>
               {showGradesMobile && (
                 <div className="ml-2 mt-1 space-y-2">
-                  {grades.map((g) => (
+                  {(grades?.length
+                    ? grades.map((g) => g.name)
+                    : [
+                        "Pre-K",
+                        "Kindergarten",
+                        "First Grade",
+                        "Second Grade",
+                        "Third Grade",
+                        "Fourth Grade",
+                        "Fifth Grade",
+                        "Sixth Grade",
+                        "Seventh Grade",
+                        "Eighth Grade",
+                        "High School",
+                      ]
+                  ).map((name) => (
                     <Link
-                      key={g.name}
-                      href={`/explore-library?grade=${encodeURIComponent(g.name)}`}
+                      key={name}
+                      href={`/explore-library?grades=${encodeURIComponent(name)}`}
                       onClick={closeMenu}
                       className="block hover:text-gray-300"
                     >
-                      {g.name} ({g.count})
+                      {name}
                     </Link>
                   ))}
                 </div>
@@ -260,21 +370,35 @@ const Header = () => {
                 onClick={() => setShowSubjectsMobile((v) => !v)}
               >
                 <span>Subjects</span>
-                <svg width="11" height="6" viewBox="0 0 11 6" fill="none" xmlns="http://www.w3.org/2000/svg"
-                  className={`${showSubjectsMobile ? "rotate-180" : ""} transition-transform`}>
-                  <path d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619" stroke="white" strokeLinecap="round" strokeLinejoin="round"/>
+                <svg
+                  width="11"
+                  height="6"
+                  viewBox="0 0 11 6"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className={`${showSubjectsMobile ? "rotate-180" : ""} transition-transform`}
+                >
+                  <path
+                    d="M0.961914 0.609619L5.67991 5.39062L10.3079 0.824619"
+                    stroke="white"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </button>
               {showSubjectsMobile && (
                 <div className="ml-2 mt-1 space-y-2">
-                  {subjects.map((s) => (
+                  {(subjects?.length
+                    ? subjects.map((s) => s.name)
+                    : ["Language arts", "Math", "Science", "Social Studies"]
+                  ).map((name) => (
                     <Link
-                      key={s.name}
-                      href={`/explore-library?subject=${encodeURIComponent(s.name)}`}
+                      key={name}
+                      href={`/explore-library?subjects=${encodeURIComponent(name)}`}
                       onClick={closeMenu}
                       className="block hover:text-gray-300"
                     >
-                      {s.name} ({s.count})
+                      {name}
                     </Link>
                   ))}
                 </div>
@@ -292,7 +416,7 @@ const Header = () => {
         </div>
       </header>
 
-      {/* Help Popup (kept) */}
+      {/* Help Popup */}
       {helpOpen && <HelpPopup open={helpOpen} onClose={() => setHelpOpen(false)} />}
     </>
   );

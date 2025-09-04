@@ -11,11 +11,21 @@ async function getBaseUrl() {
   return `${proto}://${host}`;
 }
 
+// normalize URL params into arrays
+function arr(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  // support CSV fallback if framework passed a string
+  return String(x).split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 async function fetchResults(sp) {
   const body = {
     q: sp.q || "",
-    subjects: sp.subject ? [sp.subject] : [],
-    grades: sp.grade ? [sp.grade] : [],
+    subjects: arr(sp.subjects),
+    grades: arr(sp.grades),
+    topics: arr(sp.topics),
+    sub_topics: arr(sp.sub_topics),
     page: Number(sp.page || 1),
     pageSize: 12,
   };
@@ -36,7 +46,7 @@ export const metadata = {
 };
 
 export default async function ExplorePage({ searchParams }) {
-  // ⬇️ searchParams is now a Promise in newer Next versions
+  // In Next 14, searchParams can be a plain object; keep robust either way
   const sp = await searchParams;
 
   const initial = await fetchResults(sp);
