@@ -17,6 +17,29 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
   const [topicSearch, setTopicSearch] = useState("");
   const [subTopicSearch, setSubTopicSearch] = useState("");
 
+  // 🔒 Lock background scroll when popup is open (restores exact scroll position on close)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const { body } = document;
+    const scrollY = window.scrollY;
+    const prevStyle = body.getAttribute("style") || "";
+
+    // Lock
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+
+    return () => {
+      // Restore
+      body.setAttribute("style", prevStyle);
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen]);
+
   // selected names
   const selectedSubjectNames = useMemo(
     () => subjects.filter((s) => s.checked).map((s) => s.name),

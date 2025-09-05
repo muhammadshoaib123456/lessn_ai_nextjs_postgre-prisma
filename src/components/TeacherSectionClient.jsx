@@ -1,11 +1,18 @@
 // components/TeacherSectionClient.jsx
 "use client";
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  memo,
+} from "react";
 import Link from "next/link";
 import PresentationCard from "@/components/PresentationCard";
 
-export default function TeacherSectionClient({
+function TeacherSectionClient({
   items = [],
   title = "Teachers love these",
   showCTA = true,
@@ -16,10 +23,10 @@ export default function TeacherSectionClient({
   cardWidth = 320,
   cardHeight = 420,
   gap = 24,
-  leftPad = 24,     // ⬅ first card inset
-  peekRight = true, // ⬅ if true, no right padding → last card peeks
+  leftPad = 24,
+  peekRight = true,
 
-  // ⚡ Short, visible animation that starts immediately
+  // short, visible animation
   animationMs = 160,
 }) {
   const scrollerRef = useRef(null);
@@ -28,11 +35,17 @@ export default function TeacherSectionClient({
   const initRef = useRef(false);
   const [initialized, setInitialized] = useState(false);
 
-  // Track an in-progress animation so we can cancel instantly on a new click
+  // Track an in-progress animation so we can cancel instantly
   const animRef = useRef({ raf: 0, cancel: false });
 
-  // clones for infinite loop
-  const CLONES = Math.min(5, Math.max(1, Math.floor(items.length / 3) || 1));
+  // Fewer clones → far smaller DOM with identical visuals/behavior
+  const CLONES = useMemo(() => {
+    if (!items.length) return 0;
+    // Cap clones to 2 to prevent DOM bloat; looks/behaves the same for users.
+    const n = Math.max(1, Math.floor(items.length / 4) || 1);
+    return Math.min(2, n);
+  }, [items.length]);
+
   const extended = useMemo(() => {
     if (items.length === 0) return [];
     const head = items.slice(0, CLONES);
@@ -43,7 +56,6 @@ export default function TeacherSectionClient({
   const START_INDEX = useMemo(() => (items.length ? CLONES : 0), [items.length, CLONES]);
   const [index, setIndex] = useState(START_INDEX);
 
-  // measure one column width + column gap
   const measureCardWidth = () => {
     const grid = gridRef.current;
     if (!grid) return 0;
@@ -57,31 +69,46 @@ export default function TeacherSectionClient({
 
   // initial position
   useLayoutEffect(() => {
-    if (initRef.current) return;
+    if (initRef.current || extended.length === 0) return;
     const el = scrollerRef.current;
-    if (!el || extended.length === 0) return;
+    if (!el) return;
 
     const w = measureCardWidth() || cardWidth + gap;
     cardWidthRef.current = w;
 
     setIndex(START_INDEX);
+    // Avoid layout thrash: write once, with scroll-behavior disabled
+    const prev = el.style.scrollBehavior;
+    el.style.scrollBehavior = "auto";
     el.scrollLeft = START_INDEX * w;
+    el.style.scrollBehavior = prev || "";
 
     initRef.current = true;
     setInitialized(true);
-  }, [START_INDEX, extended.length, cardWidth, gap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [START_INDEX, extended.length]);
 
-  // keep index position on resize
+  // keep index position on resize (rAF to coalesce)
   useEffect(() => {
+    let frame = 0;
     const onResize = () => {
-      const el = scrollerRef.current;
-      if (!el) return;
-      const newW = measureCardWidth() || cardWidth + gap;
-      cardWidthRef.current = newW;
-      el.scrollLeft = index * newW;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const el = scrollerRef.current;
+        if (!el) return;
+        const newW = measureCardWidth() || cardWidth + gap;
+        cardWidthRef.current = newW;
+        const prev = el.style.scrollBehavior;
+        el.style.scrollBehavior = "auto";
+        el.scrollLeft = index * newW;
+        el.style.scrollBehavior = prev || "";
+      });
     };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(frame);
+    };
   }, [index, cardWidth, gap]);
 
   const jumpWithoutAnim = (targetIndex) => {
@@ -96,7 +123,6 @@ export default function TeacherSectionClient({
 
   // Instant-start animation helper with cancel + onDone
   const animateScrollTo = (el, targetLeft, duration, onDone) => {
-    // cancel any in-flight animation
     if (animRef.current.raf) {
       cancelAnimationFrame(animRef.current.raf);
       animRef.current.raf = 0;
@@ -126,11 +152,9 @@ export default function TeacherSectionClient({
       }
     };
 
-    // ensure immediate start
     animRef.current.raf = requestAnimationFrame(step);
   };
 
-  // one-card move — instant start + short visible animation
   const scrollByOneCard = (dir) => {
     const el = scrollerRef.current;
     if (!el || extended.length === 0) return;
@@ -138,12 +162,8 @@ export default function TeacherSectionClient({
     const w = cardWidthRef.current || measureCardWidth() || cardWidth + gap;
     const next = index + dir;
 
-    // Update state right away so UI reflects the new logical slide
     setIndex(next);
-
-    // Start animation immediately
     animateScrollTo(el, next * w, Math.max(100, animationMs), () => {
-      // Loop correction exactly when animation ends (no timers)
       if (next < CLONES) {
         const newIndex = next + items.length;
         setIndex(newIndex);
@@ -189,9 +209,11 @@ export default function TeacherSectionClient({
         {/* scroller */}
         <div
           ref={scrollerRef}
-          // Remove scroll-snap so it doesn't fight our JS animation
           className={`no-scrollbar ${initialized ? "" : "invisible"}`}
-          style={{ overflowX: "hidden" }}
+          style={{
+            overflowX: "hidden",
+            willChange: "scroll-position", // hint for smoother scroll/animation
+          }}
         >
           <div
             ref={gridRef}
@@ -219,10 +241,7 @@ export default function TeacherSectionClient({
 
         {showCTA && (
           <div className="mt-12 text-center">
-            <Link
-              href={ctaHref}
-              className="rounded-full bg-[#9500DE] px-8 py-3 text-white hover:bg-[#7c00b9]"
-            >
+            <Link href={ctaHref} className="rounded-full bg-[#9500DE] px-8 py-3 text-white hover:bg-[#7c00b9]">
               {ctaLabel}
             </Link>
           </div>
@@ -231,3 +250,5 @@ export default function TeacherSectionClient({
     </section>
   );
 }
+
+export default memo(TeacherSectionClient);

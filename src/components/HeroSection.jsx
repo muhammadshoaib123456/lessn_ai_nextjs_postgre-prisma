@@ -1,10 +1,15 @@
+// components/HeroSection.jsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import HelpPopup from "@/components/HelpPopup";
-import DOMPurify from "isomorphic-dompurify";
+import dynamic from "next/dynamic";
+
+// Lazy-load Help popup (keeps hero critical path slimmer)
+const HelpPopup = dynamic(() => import("@/components/HelpPopup"), { ssr: false, loading: () => null });
+
+const stripHtml = (s) => String(s || "").replace(/<[^>]+>/g, "").trim(); // small + fast
 
 const HeroSection = () => {
   // --- NAV / UI STATE ---
@@ -43,17 +48,11 @@ const HeroSection = () => {
   };
   const leaveGrade = () => {
     clearGradeClose();
-    gradeCloseRef.current = setTimeout(
-      () => setShowGradeDropdown(false),
-      LEAVE_CLOSE_MS
-    );
+    gradeCloseRef.current = setTimeout(() => setShowGradeDropdown(false), LEAVE_CLOSE_MS);
   };
   const leaveSubject = () => {
     clearSubjectClose();
-    subjectCloseRef.current = setTimeout(
-      () => setShowSubjectDropdown(false),
-      LEAVE_CLOSE_MS
-    );
+    subjectCloseRef.current = setTimeout(() => setShowSubjectDropdown(false), LEAVE_CLOSE_MS);
   };
 
   // --- SEARCH/SUGGEST STATE ---
@@ -71,8 +70,8 @@ const HeroSection = () => {
   const debounceRef = useRef(null);
 
   // ---- CLIENT-SIDE CACHE (query -> items)
-  const cacheRef = useRef(new Map()); // Map<string, Array>
-  const [lastFetchedQ, setLastFetchedQ] = useState(""); // track last query that we actually fetched
+  const cacheRef = useRef(new Map());
+  const [lastFetchedQ, setLastFetchedQ] = useState("");
 
   // --- DYNAMIC LISTS (grades / subjects) ---
   const [grades, setGrades] = useState([
@@ -88,21 +87,29 @@ const HeroSection = () => {
     "Eighth Grade",
     "High School",
   ]);
-  const [subjects, setSubjects] = useState([
-    "Language arts",
-    "Math",
-    "Science",
-    "Social Studies",
-  ]);
+  const [subjects, setSubjects] = useState(["Language arts", "Math", "Science", "Social Studies"]);
 
-  // Prefetch routes to reduce navigational delay
+  // Prefetch non-home routes *after the browser is idle* (avoids blocking first paint)
   useEffect(() => {
-    router.prefetch("/");
-    router.prefetch("/see-all-results");
-    router.prefetch("/explore-library");
+    const idle = (cb) => {
+      if (typeof window === "undefined") return;
+      if ("requestIdleCallback" in window) return window.requestIdleCallback(cb, { timeout: 2000 });
+      return setTimeout(cb, 1200);
+    };
+    const cancel = idle(() => {
+      try {
+        router.prefetch("/see-all-results");
+        router.prefetch("/explore-library");
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => {
+      if (typeof cancel === "number") clearTimeout(cancel);
+    };
   }, [router]);
 
-  // Cache meta in sessionStorage to avoid re-fetching on return
+  // Cache meta (grades + subjects) with a single request and save to sessionStorage
   useEffect(() => {
     (async () => {
       try {
@@ -113,23 +120,20 @@ const HeroSection = () => {
         if (cachedS) setSubjects(JSON.parse(cachedS));
 
         if (!cachedG || !cachedS) {
-          const [gr, sj] = await Promise.all([
-            fetch("/api/meta/grades", { cache: "force-cache" }).then((r) =>
-              r.ok ? r.json() : []
-            ),
-            fetch("/api/meta/subjects", { cache: "force-cache" }).then((r) =>
-              r.ok ? r.json() : []
-            ),
-          ]);
-          if (Array.isArray(gr) && gr.length) {
-            const vals = gr.map((g) => g.name);
-            setGrades(vals);
-            sessionStorage.setItem("meta_grades", JSON.stringify(vals));
-          }
-          if (Array.isArray(sj) && sj.length) {
-            const vals = sj.map((s) => s.name);
-            setSubjects(vals);
-            sessionStorage.setItem("meta_subjects", JSON.stringify(vals));
+          // one round trip instead of two
+          const res = await fetch("/api/meta/filters", { cache: "force-cache" });
+          if (res.ok) {
+            const data = await res.json();
+            const gVals = Array.isArray(data?.grades) ? data.grades.map((g) => g.name) : [];
+            const sVals = Array.isArray(data?.subjects) ? data.subjects.map((s) => s.name) : [];
+            if (gVals.length) {
+              setGrades(gVals);
+              sessionStorage.setItem("meta_grades", JSON.stringify(gVals));
+            }
+            if (sVals.length) {
+              setSubjects(sVals);
+              sessionStorage.setItem("meta_subjects", JSON.stringify(sVals));
+            }
           }
         }
       } catch {
@@ -143,35 +147,32 @@ const HeroSection = () => {
       clearGradeClose();
       clearSubjectClose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- Helpers
-  const toPlain = (s) =>
-    DOMPurify.sanitize(String(s || ""), {
-      ALLOWED_TAGS: [],
-      ALLOWED_ATTR: [],
-    }).trim();
-
+  // Helpers
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  // multi-keyword highlight inside TOPIC only
-  const highlightTopic = (topic, query) => {
+  // Precompute tokens + regex once per query
+  const qTokens = useMemo(
+    () =>
+      String(q || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean),
+    [q]
+  );
+  const qRegex = useMemo(() => {
+    if (!qTokens.length) return null;
+    return new RegExp(`(${qTokens.sort((a, b) => b.length - a.length).map(escapeRe).join("|")})`, "ig");
+  }, [qTokens]);
+
+  const highlightTopic = (topic) => {
     const t = String(topic || "");
-    const tokens = String(query || "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-    if (!tokens.length) return t;
-
-    const pattern = new RegExp(
-      `(${tokens.sort((a, b) => b.length - a.length).map(escapeRe).join("|")})`,
-      "ig"
-    );
-
-    // Important: reset regex state for .test by using a new instance in map
-    const parts = t.split(pattern);
+    if (!qRegex) return t;
+    const parts = t.split(qRegex);
     return parts.map((part, i) =>
-      new RegExp(pattern).test(part) ? (
+      qRegex.test(part) ? (
         <mark key={i} className="bg-[#9500DE] text-white rounded px-0.5">
           {part}
         </mark>
@@ -181,35 +182,26 @@ const HeroSection = () => {
     );
   };
 
-  // topic-only scoring with multi-keyword AND preference
-  const scoreByTopic = (topic, query) => {
+  const scoreByTopic = (topic) => {
     const T = String(topic || "").toLowerCase();
-    const toks = String(query || "")
-      .toLowerCase()
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-    if (!T || !toks.length) return 0;
+    if (!T || !qTokens.length) return 0;
 
-    const phrase = toks.join(" ");
+    const phrase = qTokens.join(" ");
     let score = 0;
 
-    // phrase signals
     if (T.startsWith(phrase)) score += 120;
     else if (T.includes(phrase)) score += 90;
 
-    // token signals (AND weight)
     let all = true;
-    toks.forEach((tk) => {
+    qTokens.forEach((tk) => {
       if (T.startsWith(tk)) score += 30;
       if (T.includes(tk)) score += 20;
       if (!T.includes(tk)) all = false;
     });
-    if (all) score += 40; // bonus for matching all keywords
+    if (all) score += 40;
     return score;
   };
 
-  // --- Instant feedback on typing: mark dirty + open; show loader only if cache miss
   const onType = (val) => {
     setQ(val);
     if (!hadFirstType) setHadFirstType(true);
@@ -217,29 +209,25 @@ const HeroSection = () => {
 
     const trimmed = val.trim();
     if (!trimmed) {
-      // clearing input
       setItems([]);
       setLoading(false);
       return;
     }
 
-    // If we already have cached results for this exact query, show instantly (no spinner)
     const cached = cacheRef.current.get(trimmed);
     if (cached && cached.length) {
       setItems(cached);
       setLoading(false);
     } else {
-      // only show loader on cache miss
       setLoading(true);
     }
   };
 
-  // --- Debounced suggestions fetch (1s after typing stops)
+  // Debounced suggestions fetch (1s after typing stops)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const trimmed = q.trim();
-
     if (!trimmed) {
       setItems([]);
       setLoading(false);
@@ -247,7 +235,6 @@ const HeroSection = () => {
       return;
     }
 
-    // If we already fetched this exact query (and it's cached), skip fetch
     if (trimmed === lastFetchedQ) {
       const cached = cacheRef.current.get(trimmed);
       if (cached && cached.length) {
@@ -256,10 +243,8 @@ const HeroSection = () => {
         setOpen(true);
         return;
       }
-      // fall-through if somehow not cached
     }
 
-    // 1000ms debounce per requirement
     debounceRef.current = setTimeout(async () => {
       if (suggestAbortRef.current) suggestAbortRef.current.abort();
       const ctrl = new AbortController();
@@ -273,7 +258,6 @@ const HeroSection = () => {
         const data = await res.json();
         const rawItems = Array.isArray(data?.items) ? data.items : [];
 
-        // normalize & topic-only sort, take top 4
         const normalized = rawItems.map((x) => ({
           id: x.id || x.slug || x.topic || x.title || x.name,
           slug: x.slug,
@@ -289,10 +273,9 @@ const HeroSection = () => {
         }));
 
         const sorted = normalized
-          .sort((a, b) => scoreByTopic(b.topic, trimmed) - scoreByTopic(a.topic, trimmed))
+          .sort((a, b) => scoreByTopic(b.topic) - scoreByTopic(a.topic))
           .slice(0, 4);
 
-        // cache & set state
         cacheRef.current.set(trimmed, sorted);
         setLastFetchedQ(trimmed);
         setItems(sorted);
@@ -311,7 +294,6 @@ const HeroSection = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  // Close suggestions when clicking outside (do NOT clear items; keep cache)
   useEffect(() => {
     function handleClickOutside(e) {
       if (boxRef.current && !boxRef.current.contains(e.target)) {
@@ -322,20 +304,17 @@ const HeroSection = () => {
     return () => document.removeEventListener("click", handleClickOutside);
   }, []);
 
-  // Initiate search navigation
   const goSearch = () => {
     const query = q.trim();
     if (!query) return;
     router.push(`/see-all-results?q=${encodeURIComponent(query)}`);
   };
 
-  // Build query for Explore Library
   const pushWithQuery = (params) => {
     const qs = new URLSearchParams(params).toString();
     router.push(`/explore-library?${qs}`);
   };
 
-  // Click handlers for dropdown menu items
   const onClickGrade = (gradeName) => {
     clearGradeClose();
     setShowGradeDropdown(false);
@@ -347,18 +326,11 @@ const HeroSection = () => {
     pushWithQuery({ subjects: subjectName });
   };
 
-  // Loader UI
   const LoaderRow = () => (
     <div className="px-4 py-3 flex items-center gap-2">
       <svg className="h-4 w-4 animate-spin opacity-90" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
-        <path
-          d="M21 12a9 9 0 0 1-9 9"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-          opacity="0.9"
-        />
+        <path d="M21 12a9 9 0 0 1-9 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity="0.9" />
       </svg>
       <span className="text-sm opacity-90">Searching…</span>
     </div>
@@ -369,7 +341,6 @@ const HeroSection = () => {
       {/* Top Navigation Bar */}
       <nav className="flex flex-wrap items-center justify-between md:ml-8 md:mr-7 md:mt-2 md:py-4 sm:px-30 md:px-0 lg:px-8 xl:mb-10 text-white">
         <div className="flex items-center md:pl-2">
-          {/* Prefetching Link for faster returns to landing */}
           <Link href="/" prefetch aria-label="Lessn Home">
             <img
               src="/lessnlogo.svg"
@@ -396,11 +367,7 @@ const HeroSection = () => {
           </li>
 
           {/* Grade selector */}
-          <li
-            className="relative hover:bg-[#9500DE] px-2 py-2"
-            onMouseEnter={openGrade}
-            onMouseLeave={leaveGrade}
-          >
+          <li className="relative hover:bg-[#9500DE] px-2 py-2" onMouseEnter={openGrade} onMouseLeave={leaveGrade}>
             <button type="button" className="flex items-center space-x-1 transition hover:text-gray-200">
               <span>Select Grade</span>
               <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16" className="mt-1 h-3 w-3">
@@ -426,11 +393,7 @@ const HeroSection = () => {
           </li>
 
           {/* Subject selector */}
-          <li
-            className="relative hover:bg-[#9500DE] px-2 py-2"
-            onMouseEnter={openSubject}
-            onMouseLeave={leaveSubject}
-          >
+          <li className="relative hover:bg-[#9500DE] px-2 py-2" onMouseEnter={openSubject} onMouseLeave={leaveSubject}>
             <button type="button" className="flex items-center space-x-1 transition hover:text-gray-200">
               <span>Select Subject</span>
               <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16" className="mt-1 h-3 w-3">
@@ -504,14 +467,7 @@ const HeroSection = () => {
             onClick={() => setOpenMobile(!openMobile)}
             type="button"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth="1.5"
-              stroke="currentColor"
-              className="h-6 w-6"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="h-6 w-6">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 5h16.5m-16.5 7.5h16.5m-16.5 7.5h16.5" />
             </svg>
           </button>
@@ -526,53 +482,30 @@ const HeroSection = () => {
               <Link href="/" prefetch aria-label="Lessn Home">
                 <img src="/lessnlogo.svg" alt="Lessn logo" className="w-16 h-auto object-contain" />
               </Link>
-              <button
-                className="text-gray-200"
-                aria-label="Close menu"
-                onClick={() => setOpenMobile(false)}
-                type="button"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth="1.5"
-                  stroke="currentColor"
-                  className="h-6 w-6"
-                >
+              <button className="text-gray-200" aria-label="Close menu" onClick={() => setOpenMobile(false)} type="button">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="h-6 w-6">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
             <div className="flex flex-col space-y-4 text-sm">
-              <Link
-                href="/explore-library"
-                prefetch
-                className="hover:text-gray-200"
-                onClick={() => setOpenMobile(false)}
-              >
+              <Link href="/explore-library" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
                 Explore Library
               </Link>
               <Link href="/create" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
                 Create a Lesson
               </Link>
 
-              <button className="text-left hover:text-gray-200" type="button">
-                Select Grade
-              </button>
-              <button className="text-left hover:text-gray-200" type="button">
-                Select Subject
-              </button>
+              <button className="text-left hover:text-gray-200" type="button">Select Grade</button>
+              <button className="text-left hover:text-gray-200" type="button">Select Subject</button>
 
               <div className="flex flex-col space-y-2 pt-2 md:hidden">
                 <Link href="/login" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
                   Login
                 </Link>
                 <span className="hidden">
-                  <Link href="/register" prefetch>
-                    Register
-                  </Link>
+                  <Link href="/register" prefetch>Register</Link>
                 </span>
               </div>
 
@@ -606,6 +539,8 @@ const HeroSection = () => {
             alt=""
             aria-hidden="true"
             className="invisible w-[260px] sm:w-[300px] md:w-[360px] lg:w-[420px] xl:w-[500px] h-auto"
+            loading="lazy"
+            decoding="async"
           />
         </div>
 
@@ -625,15 +560,13 @@ const HeroSection = () => {
               onChange={(e) => onType(e.target.value)}
               onFocus={() => {
                 const trimmed = q.trim();
-                if (!trimmed) return; // nothing to show
+                if (!trimmed) return;
                 const cached = cacheRef.current.get(trimmed);
                 setOpen(true);
                 if (cached && cached.length) {
-                  // show cached immediately, no spinner, no fetch
                   setItems(cached);
                   setLoading(false);
                 } else {
-                  // cache miss: show loader until debounce fetch completes
                   setLoading(true);
                 }
               }}
@@ -662,7 +595,6 @@ const HeroSection = () => {
                 className="absolute left-0 top[110%] mt-2 w-full bg-gray-900 text-white rounded-xl shadow-2xl z-[900]"
                 style={{ top: "110%" }}
               >
-                {/* Loader while typing / fetching */}
                 {loading && <LoaderRow />}
 
                 {!loading && items.length === 0 && hadFirstType && (
@@ -675,8 +607,11 @@ const HeroSection = () => {
                       const topic = item.topic || "Untitled";
                       const grade = item.grade || "";
                       const subtopic = item.subtopic || item.sub_topic || "";
-                      const snippet = toPlain(item.snippet || "");
-                      const snippetShort = snippet.length > 140 ? snippet.slice(0, 140) + "…" : snippet;
+                      const snippetShort = (() => {
+                        const t = stripHtml(item.snippet || "");
+                        return t.length > 140 ? t.slice(0, 140) + "…" : t;
+                      })();
+
                       return (
                         <Link
                           key={item.id || item.slug || topic}
@@ -685,12 +620,10 @@ const HeroSection = () => {
                           onClick={() => setOpen(false)}
                           role="option"
                         >
-                          <div className="text-sm font-semibold">{highlightTopic(topic, q)}</div>
+                          <div className="text-sm font-semibold">{highlightTopic(topic)}</div>
                           {grade && <div className="text-xs opacity-80">Grade: {grade}</div>}
                           {subtopic && <div className="text-xs opacity-80">{subtopic}</div>}
-                          {snippetShort && (
-                            <div className="text-[11px] mt-1 line-clamp-1 opacity-60">{snippetShort}</div>
-                          )}
+                          {snippetShort && <div className="text-[11px] mt-1 line-clamp-1 opacity-60">{snippetShort}</div>}
                         </Link>
                       );
                     })}
@@ -728,6 +661,8 @@ const HeroSection = () => {
             alt=""
             aria-hidden="true"
             className="invisible w-2/3 max-w-[350px] object-contain sm:max-w-[350px] md:max-w-[380px] lg:max-w-[420px] xl:max-w-[480px] 2xl:max-w-[560px]"
+            loading="lazy"
+            decoding="async"
           />
         </div>
       </div>

@@ -1,10 +1,29 @@
-import React from "react";
+// components/HelpPopup.jsx
+import React, { useEffect } from "react";
 
 export default function HelpPopup({ open = false, onClose = () => {} }) {
   if (!open) return null;
 
+  // Lock background scroll while the modal is open
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    const prevTouchAction = document.body.style.touchAction;
+
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none"; // improves iOS scroll lock
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.touchAction = prevTouchAction;
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 bg-black/40 grid place-items-center z-50">
+    <div
+      className="fixed inset-0 bg-black/40 grid place-items-center z-[9999]" // ⬅ high z-index
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="w-[700px] h-[466px] bg-white rounded-lg shadow-xl overflow-hidden flex flex-col max-w-[96vw]">
         {/* Header */}
         <div className="h-[53px] bg-[#9500DE] text-white flex items-center justify-between px-6">
@@ -113,8 +132,6 @@ export default function HelpPopup({ open = false, onClose = () => {} }) {
     </div>
   );
 }
-
-
 
 
 

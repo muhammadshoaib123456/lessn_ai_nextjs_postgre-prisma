@@ -1,4 +1,6 @@
 // app/api/meta/filters/route.js
+export const revalidate = 3600; // cache for 1h
+
 import { prisma } from "@/lib/prisma";
 
 const titleCase = (s) =>
@@ -9,23 +11,15 @@ const titleCase = (s) =>
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
 function buildList(rows, key) {
-  // rows look like: [{ [key]: "Math", _count: { _all: 3110 } }, ...]
   const map = new Map();
-
   for (const r of rows || []) {
     const raw = r?.[key];
     const name = titleCase(raw);
-    if (!name) continue; // skip null/empty
-
+    if (!name) continue;
     const k = name.toLowerCase();
     const prev = map.get(k);
-
-    map.set(k, {
-      name,
-      count: (prev?.count || 0) + (r?._count?._all || 0),
-    });
+    map.set(k, { name, count: (prev?.count || 0) + (r?._count?._all || 0) });
   }
-
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -46,7 +40,7 @@ export async function GET() {
   } catch (e) {
     console.error("GET /api/meta/filters error:", e);
     return new Response(JSON.stringify({ subjects: [], grades: [] }), {
-      status: 200, // or 500 if you prefer to signal failure
+      status: 200,
       headers: { "content-type": "application/json" },
     });
   }

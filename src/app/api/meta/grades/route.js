@@ -1,4 +1,6 @@
-// api/meta/grades (or wherever you're using this handler)
+export const revalidate = 3600;
+
+// api/meta/grades
 import { prisma } from "@/lib/prisma";
 
 const titleCase = (s) =>
@@ -8,7 +10,6 @@ const titleCase = (s) =>
     .replace(/\s+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
-// Your desired order:
 const ORDER = [
   "Pre-K",
   "Kindergarten",
@@ -23,17 +24,11 @@ const ORDER = [
   "High School",
 ];
 
-// Normalize incoming grade values to match the ORDER keys
 function normalizeGrade(raw) {
   const s = String(raw || "").trim().toLowerCase();
-
   if (!s) return "";
-
-  // common variants mapping → canonical label in ORDER
   if (["pre k", "pre-k", "prek", "pk", "prekindergarten"].includes(s)) return "Pre-K";
   if (["k", "kg", "kinder", "kindergarten", "kingdergardon"].includes(s)) return "Kindergarten";
-
-  // ordinal grades
   const map = {
     "1st grade": "First Grade",
     "first grade": "First Grade",
@@ -57,13 +52,8 @@ function normalizeGrade(raw) {
 }
 
 export async function GET() {
-  // group by grade
-  const rows = await prisma.presentation.groupBy({
-    by: ["grade"],
-    _count: { grade: true },
-  });
+  const rows = await prisma.presentation.groupBy({ by: ["grade"], _count: { grade: true } });
 
-  // merge counts across variants, then sort by ORDER
   const combined = new Map();
   for (const r of rows) {
     const canon = normalizeGrade(r.grade);
@@ -75,7 +65,6 @@ export async function GET() {
   const list = Array.from(combined.values()).sort((a, b) => {
     const ia = ORDER.indexOf(a.name);
     const ib = ORDER.indexOf(b.name);
-    // anything not in ORDER goes to the end alphabetically
     if (ia === -1 && ib === -1) return a.name.localeCompare(b.name);
     if (ia === -1) return 1;
     if (ib === -1) return -1;
