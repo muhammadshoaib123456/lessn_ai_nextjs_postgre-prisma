@@ -1,66 +1,62 @@
-import React from "react";
-import Link from "next/link";
+"use client";
+
+import React, { useState } from "react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
-const ForgotPassword = () => {
+export default function ForgotPassword() {
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setMsg("");
+    await fetch("/api/auth/forgot-password", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    setMsg("If that email exists, a reset link has been sent.");
+  }
+
   return (
     <>
       <Header />
       <div className="w-full min-h-screen flex justify-center bg-white px-4">
         <div className="w-full max-w-[480px] my-16 text-black">
-          {/* Title */}
-          <h2 className="text-2xl md:text-3xl font-bold mb-4 text-left">
-            Forgot password
-          </h2>
-
-          {/* Description */}
+          <h2 className="text-2xl md:text-3xl font-bold mb-4 text-left">Forgot password</h2>
           <p className="text-gray-600 text-sm md:text-base mb-8 leading-relaxed text-left">
-            To reset your password, please enter the email associated with your
-            Lessn Account. You will receive an email with the reset password link
-            at the email address provided. If you haven’t received the email yet,
-            try again after 90 seconds.
+            Enter the email for your Lessn account. You'll receive a reset link.
           </p>
 
-          {/* Form */}
-          <form className="flex flex-col gap-6">
-            {/* Email Field */}
+          <form className="flex flex-col gap-6" onSubmit={submit} autoComplete="on">
             <div className="text-left">
-              <label className="block text-sm font-medium mb-2">
-                Enter User Email
-              </label>
+              <label className="block text-sm font-medium mb-2">Enter User Email</label>
               <input
                 type="email"
+                name="email"
+                autoComplete="email"
                 placeholder="Enter your email"
-                className="w-full py-3 px-4 rounded-full border border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                className="w-full py-3 px-4 rounded-full border border-purple-500"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
               />
             </div>
-
-            {/* Submit Button (left aligned) */}
+            {msg && <p className="text-sm text-gray-700">{msg}</p>}
             <div className="text-left">
-              <button
-                type="submit"
-                className="w-[200px] py-3 rounded-full bg-purple-600 text-white font-semibold hover:bg-purple-700 transition"
-              >
+              <button type="submit" className="w-[200px] py-3 rounded-full bg-purple-600 text-white font-semibold">
                 Reset Password
               </button>
             </div>
           </form>
 
-          {/* Back to login (centered) */}
           <div className="mt-6 text-center">
-            <Link
-              href="/login"
-              className="text-blue-500 hover:underline text-sm md:text-base"
-            >
-              Back to login
-            </Link>
+            <a href="/login" className="text-blue-500 hover:underline">Back to login</a>
           </div>
         </div>
       </div>
       <Footer />
     </>
   );
-};
-
-export default ForgotPassword;
+}

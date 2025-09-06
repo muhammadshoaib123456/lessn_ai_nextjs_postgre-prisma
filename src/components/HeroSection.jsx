@@ -5,6 +5,8 @@ import React, { useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { useSession } from "next-auth/react";
+import ProfileDropdown from "@/components/ProfileDropdown";
 
 // Lazy-load Help popup (keeps hero critical path slimmer)
 const HelpPopup = dynamic(() => import("@/components/HelpPopup"), { ssr: false, loading: () => null });
@@ -12,6 +14,8 @@ const HelpPopup = dynamic(() => import("@/components/HelpPopup"), { ssr: false, 
 const stripHtml = (s) => String(s || "").replace(/<[^>]+>/g, "").trim(); // small + fast
 
 const HeroSection = () => {
+  const { data: session } = useSession();
+
   // --- NAV / UI STATE ---
   const [openMobile, setOpenMobile] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -419,26 +423,26 @@ const HeroSection = () => {
           </li>
         </ul>
 
-        {/* Right-side links (Login/Help) */}
+        {/* Right-side links (Login/Help or Profile/Help) */}
         <div className="font-inter md:text-[12px] hidden lg:flex lg:gap-4 items-center text-sm lg:text-[14px]">
-          <Link
-            href="/login"
-            prefetch
-            className="transition flex items-center gap-1 hover:text-gray-200 hover:bg-[#9500DE] px-1 py-1"
-          >
-            <svg width="12" height="10" viewBox="0 0 12 10" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path
-                d="M9.75 9.40576H7.78125C7.62656 9.40576 7.5 9.2792 7.5 9.12451V8.18701C7.5 8.03232 7.62656 7.90576 7.78125 7.90576H9.75C10.1648 7.90576 10.5 7.57061 10.5 7.15576V2.65576C10.5 2.24092 10.1648 1.90576 9.75 1.90576H7.78125C7.62656 1.90576 7.5 1.7792 7.5 1.62451V0.687012C7.5 0.532324 7.62656 0.405762 7.78125 0.405762H9.75C10.9922 0.405762 12 1.41357 12 2.65576V7.15576C12 8.39795 10.9922 9.40576 9.75 9.40576ZM8.64844 4.69482L4.71094 0.757324C4.35938 0.405762 3.75 0.651855 3.75 1.15576V3.40576H0.5625C0.250781 3.40576 0 3.65654 0 3.96826V6.21826C0 6.52998 0.250781 6.78076 0.5625 6.78076H3.75V9.03076C3.75 9.53467 4.35938 9.78076 4.71094 9.4292L8.64844 5.4917C8.86641 5.27139 8.86641 4.91514 8.64844 4.69482Z"
-                fill="white"
-              />
-            </svg>
-            Login
-          </Link>
-          <span className="hidden">
-            <Link href="/register" prefetch>
-              Register
+          {!session ? (
+            <Link
+              href="/login"
+              prefetch
+              className="transition flex items-center gap-1 hover:text-gray-200 hover:bg-[#9500DE] px-1 py-1"
+            >
+              <svg width="12" height="10" viewBox="0 0 12 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M9.75 9.40576H7.78125C7.62656 9.40576 7.5 9.2792 7.5 9.12451V8.18701C7.5 8.03232 7.62656 7.90576 7.78125 7.90576H9.75C10.1648 7.90576 10.5 7.57061 10.5 7.15576V2.65576C10.5 2.24092 10.1648 1.90576 9.75 1.90576H7.78125C7.62656 1.90576 7.5 1.7792 7.5 1.62451V0.687012C7.5 0.532324 7.62656 0.405762 7.78125 0.405762H9.75C10.9922 0.405762 12 1.41357 12 2.65576V7.15576C12 8.39795 10.9922 9.40576 9.75 9.40576ZM8.64844 4.69482L4.71094 0.757324C4.35938 0.405762 3.75 0.651855 3.75 1.15576V3.40576H0.5625C0.250781 3.40576 0 3.65654 0 3.96826V6.21826C0 6.52998 0.250781 6.78076 0.5625 6.78076H3.75V9.03076C3.75 9.53467 4.35938 9.78076 4.71094 9.4292L8.64844 5.4917C8.86641 5.27139 8.86641 4.91514 8.64844 4.69482Z"
+                  fill="white"
+                />
+              </svg>
+              Login
             </Link>
-          </span>
+          ) : (
+            <ProfileDropdown showLabel align="right" />
+          )}
+
           <div className="hidden lg:flex items-center justify-center rounded-full px-3 py-1 text-xs font-medium">
             <img
               src="/Help.svg"
@@ -452,14 +456,15 @@ const HeroSection = () => {
         {/* Mobile menu toggle */}
         <div className="flex items-center gap-7 lg:hidden">
           <div className="hidden md:flex items-center gap-6">
-            <Link href="/login" prefetch className="transition hover:text-gray-200 text-sm md:text-[12px]">
-              Login
-            </Link>
-            <span className="hidden">
-              <Link href="/register" prefetch>
-                Register
+            {!session ? (
+              <Link href="/login" prefetch className="transition hover:text-gray-200 text-sm md:text-[12px]">
+                Login
               </Link>
-            </span>
+            ) : (
+              <Link href="/profile" prefetch className="transition hover:text-gray-200 text-sm md:text-[12px]">
+                My Profile
+              </Link>
+            )}
           </div>
           <button
             className="flex items-center text-gray-200"
@@ -501,12 +506,24 @@ const HeroSection = () => {
               <button className="text-left hover:text-gray-200" type="button">Select Subject</button>
 
               <div className="flex flex-col space-y-2 pt-2 md:hidden">
-                <Link href="/login" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
-                  Login
-                </Link>
-                <span className="hidden">
-                  <Link href="/register" prefetch>Register</Link>
-                </span>
+                {!session ? (
+                  <Link href="/login" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
+                    Login
+                  </Link>
+                ) : (
+                  <>
+                    <Link href="/profile" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
+                      My Profile
+                    </Link>
+                    <Link href="/library" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
+                      My Library
+                    </Link>
+                    <Link href="/pricing" prefetch className="hover:text-gray-200" onClick={() => setOpenMobile(false)}>
+                      Pricing & Subscription
+                    </Link>
+                    {/* For mobile you can add a dedicated sign-out page/button if needed */}
+                  </>
+                )}
               </div>
 
               <button
@@ -523,7 +540,7 @@ const HeroSection = () => {
         </div>
       )}
 
-      {/* Hero Section Content */}
+      {/* Hero Section Content (unchanged) */}
       <div className="relative flex flex-col items-center justify-center px-0 text-center md:flex-row md:text-left min-h-[370px]">
         {/* Left illustration */}
         <div className="relative mb-8 mt-8 w-full md:mb-0 md:mt-0 md:w-[450px] lg:w-[500px] xl:w-[600px] md:h-full">

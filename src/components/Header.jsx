@@ -4,8 +4,13 @@ import React, { useEffect, useRef, useState } from "react";
 import HelpPopup from "@/components/HelpPopup";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import ProfileDropdown from "@/components/ProfileDropdown";
 
 const Header = () => {
+  // auth
+  const { data: session } = useSession();
+
   // ===== UI state =====
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -123,13 +128,13 @@ const Header = () => {
           <div className="flex items-center space-x-2 z-50">
             <Link href="/">
               {/* (Logo SVG left as-is) */}
-            <div className="flex items-center md:pl-2">
-          <img
-            src="/lessnlogo.svg"
-            alt="Lessn logo"
-            className="md:w-20 h-auto lg:w-30 object-contain"
-          />
-        </div>
+              <div className="flex items-center md:pl-2">
+                <img
+                  src="/lessnlogo.svg"
+                  alt="Lessn logo"
+                  className="md:w-20 h-auto lg:w-30 object-contain"
+                />
+              </div>
             </Link>
           </div>
 
@@ -217,24 +222,20 @@ const Header = () => {
 
           {/* RIGHT: Auth + Hamburger */}
           <div className="flex items-center gap-4 z-50">
-            {/* Auth Links */}
+            {/* Auth Links OR Profile */}
             <div className="hidden md:flex items-center space-x-6 text-[14px]">
-              <Link href="/login" className="flex items-center space-x-1 hover:text-gray-300">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M3 9a2 2 0 012-2h5V4l5 5-5 5v-3H5a2 2 0 01-2-2z" />
-                </svg>
-                <span>Login</span>
-              </Link>
-              <Link href="/register" className="flex items-center space-x-1 hover:text-gray-300">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11h-2v2H7v2h2v2h2v-2h2v-2h-2V7z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                <span>Sign up</span>
-              </Link>
+              {!session ? (
+                <Link href="/login" className="flex items-center space-x-1 hover:text-gray-300">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M3 9a2 2 0 012-2h5V4l5 5-5 5v-3H5a2 2 0 01-2-2z" />
+                  </svg>
+                  <span>Login</span>
+                </Link>
+              ) : (
+                <ProfileDropdown showLabel labelClassName="" align="right" />
+              )}
+
+              {/* Help button remains */}
               <div className="hidden lg:flex items-center">
                 <img
                   src="/Help.svg"
@@ -398,12 +399,27 @@ const Header = () => {
               )}
 
               <hr className="border-white/10 my-2" />
-              <Link href="/login" onClick={closeMenu} className="pl-1 hover:text-gray-300">
-                Login
-              </Link>
-              <Link href="/register" onClick={closeMenu} className="pl-1 hover:text-gray-300">
-                Sign up
-              </Link>
+              {!session ? (
+                <Link href="/login" onClick={closeMenu} className="pl-1 hover:text-gray-300">
+                  Login
+                </Link>
+              ) : (
+                <>
+                  <Link href="/profile" onClick={closeMenu} className="pl-1 hover:text-gray-300">
+                    My Profile
+                  </Link>
+                  <Link href="/library" onClick={closeMenu} className="pl-1 hover:text-gray-300">
+                    My Library
+                  </Link>
+                  <Link href="/pricing" onClick={closeMenu} className="pl-1 hover:text-gray-300">
+                    Pricing & Subscription
+                  </Link>
+                  <Link href="/login" onClick={() => closeMenu()} className="pl-1 hover:text-gray-300">
+                    {/* Logout is handled in dropdown; mobile users typically use Login/Account pages */}
+                    {/* (You can also add a separate mobile-only signOut button if you want) */}
+                  </Link>
+                </>
+              )}
             </nav>
           </aside>
         </div>
