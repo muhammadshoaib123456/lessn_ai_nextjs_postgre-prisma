@@ -2,8 +2,8 @@
 import Header from "@/components/Header";
 import ExploreClient from "@/components/ExploreClient";
 import { headers } from "next/headers";
+import crypto from "crypto";
 
-// Make this async now that headers() is async
 async function getBaseUrl() {
   const h = await headers();
   const host = h.get("host");
@@ -11,15 +11,13 @@ async function getBaseUrl() {
   return `${proto}://${host}`;
 }
 
-// normalize URL params into arrays
 function arr(x) {
   if (!x) return [];
   if (Array.isArray(x)) return x;
-  // support CSV fallback if framework passed a string
   return String(x).split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-async function fetchResults(sp) {
+async function fetchResults(sp, seed) {
   const body = {
     q: sp.q || "",
     subjects: arr(sp.subjects),
@@ -28,6 +26,7 @@ async function fetchResults(sp) {
     sub_topics: arr(sp.sub_topics),
     page: Number(sp.page || 1),
     pageSize: 12,
+    seed, // ⬅️ pass seed to API (used to randomize)
   };
 
   const base = process.env.NEXT_PUBLIC_BASE_URL || (await getBaseUrl());
@@ -46,10 +45,12 @@ export const metadata = {
 };
 
 export default async function ExplorePage({ searchParams }) {
-  // In Next 14, searchParams can be a plain object; keep robust either way
   const sp = await searchParams;
 
-  const initial = await fetchResults(sp);
+  // ⬅️ New: one seed per SSR request (changes every hard refresh)
+  const seed = crypto.randomBytes(8).toString("hex");
+
+  const initial = await fetchResults(sp, seed);
 
   return (
     <>
@@ -59,7 +60,8 @@ export default async function ExplorePage({ searchParams }) {
           <h1 className="text-4xl md:text-5xl font-bold mb-8 text-center">
             Explore Lessn Library
           </h1>
-          <ExploreClient initial={initial} initialQuery={sp.q || ""} />
+          {/* ⬅️ pass seed so client includes it on subsequent fetches */}
+          <ExploreClient initial={initial} initialQuery={sp.q || ""} seed={seed} />
         </div>
       </section>
     </>

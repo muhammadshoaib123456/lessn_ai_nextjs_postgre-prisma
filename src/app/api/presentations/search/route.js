@@ -97,10 +97,11 @@ export async function POST(req) {
     const qRaw = (body.q ?? sp.get("q") ?? "").toString().trim();
     const page = Number(body.page ?? sp.get("page") ?? 1);
     const pageSize = Number(body.pageSize ?? sp.get("pageSize") ?? 12);
+    const seed = (body.seed ?? sp.get("seed") ?? "").toString(); // ⬅️ NEW
 
     // NOTE: keep plural keys to match ExploreClient
     const subjectsIn = cleanArr(body.subjects ?? getAll(sp, "subjects")).map(titleCase);
-    const gradesIn   = cleanArr(body.grades   ?? getAll(sp, "grades")).map(normalizeGrade); // ✅ normalize
+    const gradesIn   = cleanArr(body.grades   ?? getAll(sp, "grades")).map(normalizeGrade);
     const topicsIn   = cleanArr(body.topics   ?? getAll(sp, "topics")).map(titleCase);
     const subsIn     = cleanArr(body.sub_topics ?? getAll(sp, "sub_topics")).map(titleCase);
 
@@ -110,7 +111,6 @@ export async function POST(req) {
     const hasQ = qLower.length > 0;
 
     const limit = Math.min(50, Math.max(1, pageSize));
-    const offset = (Math.max(1, page) - 1) * limit;
 
     // ---------- WHERE for raw SQL (case-insensitive facets + text search) ----------
     const W = [];
@@ -153,6 +153,34 @@ export async function POST(req) {
       : Prisma.sql`TRUE`;
 
     let itemsRaw, total;
+
+    // We need total to compute any seeded window
+    const totalRow = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS c FROM "Presentation" WHERE ${WHERE};
+    `;
+    total = Number(totalRow?.[0]?.c || 0);
+
+    // ----- Seeded window logic (only when there is NO search query) -----
+    // Goal: page 1 shows a different slice each hard refresh, but
+    // paging is deterministic within that refresh (same seed).
+    const pageNum = Math.max(1, Number(page) || 1);
+    let offset = (pageNum - 1) * limit;
+
+    if (!hasQ && seed && total > 0) {
+      const windows = Math.max(1, total - limit + 1);
+      // simple deterministic hash (djb2-like)
+      const hash = Array.from(String(seed)).reduce(
+        (h, c) => (h * 33 + c.charCodeAt(0)) >>> 0,
+        5381
+      );
+      const baseStart = hash % windows; // 0..windows-1
+      // page-based offset from the seeded base window
+      offset = baseStart + (pageNum - 1) * limit;
+      // clamp in bounds
+      if (offset + limit > total) {
+        offset = Math.max(0, total - limit);
+      }
+    }
 
     if (hasQ) {
       // Try fast trigram ranking; if pg_trgm/similarity is missing, we'll fall back.
@@ -202,11 +230,6 @@ export async function POST(req) {
           ORDER BY score DESC, "createdAt" DESC, id ASC
           OFFSET ${offset} LIMIT ${limit};
         `;
-
-        const totalRow = await prisma.$queryRaw`
-          SELECT COUNT(*)::int AS c FROM "Presentation" WHERE ${WHERE};
-        `;
-        total = Number(totalRow?.[0]?.c || 0);
       } catch {
         // fall through to Prisma fallback below
       }
@@ -222,7 +245,6 @@ export async function POST(req) {
         });
       }
       if (gradesIn.length) {
-        // ✅ use normalized labels
         andFilters.push({
           OR: gradesIn.map((g) => ({ grade: { equals: g, mode: "insensitive" } })),
         });
@@ -251,14 +273,11 @@ export async function POST(req) {
 
       const whereObj = andFilters.length ? { AND: andFilters } : {};
 
-      total = await prisma.presentation.count({ where: whereObj });
       itemsRaw = await prisma.presentation.findMany({
         where: whereObj,
-        orderBy: hasQ
-          ? [{ id: "asc" }] // keep simple if you don't have rating/reviews columns everywhere
-          : [{ id: "asc" }],
+        orderBy: [{ id: "asc" }], // stable ordering for deterministic paging
         take: Number(limit),
-        skip: offset,
+        skip: Math.max(0, offset),
         select: {
           id: true,
           slug: true,
@@ -295,11 +314,8 @@ export async function POST(req) {
           .map((s) => ({ name: titleCase(s.subject), count: s._count._all }))
           .sort((a, b) => a.name.localeCompare(b.name)),
         grades: gradesAgg
-          .map((g) => ({ name: normalizeGrade(g.grade), count: g._count._all })) // ✅ normalize here too
-          .sort((a, b) => {
-            // keep your preferred order if desired; otherwise alphabetical:
-            return a.name.localeCompare(b.name);
-          }),
+          .map((g) => ({ name: normalizeGrade(g.grade), count: g._count._all }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
         topics: topicsAgg
           .filter((t) => tidy(t.topic))
           .map((t) => ({ name: t.topic, count: t._count._all }))
@@ -318,7 +334,7 @@ export async function POST(req) {
   }
 }
 
-// Handy GET tester: /api/presentations/search?q=english&subjects=English&topics=Grammar
+// Handy GET tester: /api/presentations/search?q=&subjects=English&topics=Grammar&seed=abc123
 export async function GET(req) {
   const url = new URL(req.url, "http://localhost");
   const sp = url.searchParams;
@@ -331,6 +347,7 @@ export async function GET(req) {
     topics: getAll(sp, "topics"),
     sub_topics: getAll(sp, "sub_topics"),
     withAggregates: sp.get("withAggregates") === "1",
+    seed: sp.get("seed") || "", // ⬅️ pass through seed on GET
   };
   return POST(
     new Request(req.url, {

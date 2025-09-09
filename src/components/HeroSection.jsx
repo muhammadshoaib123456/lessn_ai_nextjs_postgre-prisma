@@ -104,6 +104,8 @@ const HeroSection = () => {
       try {
         router.prefetch("/see-all-results");
         router.prefetch("/explore-library");
+        router.prefetch("/login");
+        router.prefetch("/create");
       } catch {
         /* ignore */
       }
@@ -339,6 +341,14 @@ const HeroSection = () => {
       <span className="text-sm opacity-90">Searching…</span>
     </div>
   );
+
+  // ⬇️ NEW: prefetch presentation pages from the suggestions list on hover/focus
+  const prefetchPresentation = (slug) => {
+    if (!slug) return;
+    try {
+      router.prefetch(`/presentations/${slug}`);
+    } catch {}
+  };
 
   return (
     <>
@@ -629,12 +639,17 @@ const HeroSection = () => {
                         return t.length > 140 ? t.slice(0, 140) + "…" : t;
                       })();
 
+                      const href = `/presentations/${item.slug}`;
+
                       return (
                         <Link
                           key={item.id || item.slug || topic}
-                          href={`/presentations/${item.slug}`}
+                          href={href}
+                          prefetch
                           className="block px-4 py-3 hover:bg-[#9500DE]"
                           onClick={() => setOpen(false)}
+                          onMouseEnter={() => prefetchPresentation(item.slug)}
+                          onFocus={() => prefetchPresentation(item.slug)}
                           role="option"
                         >
                           <div className="text-sm font-semibold">{highlightTopic(topic)}</div>

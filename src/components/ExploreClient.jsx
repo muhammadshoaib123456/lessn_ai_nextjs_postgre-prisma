@@ -39,9 +39,10 @@ function eqArr(a = [], b = []) {
   return A.length === B.length && A.every((v, i) => v === B[i]);
 }
 
-function makeCacheKey(q, filters, page) {
+function makeCacheKey(q, filters, page, seed) {
   const s = (arr) => (arr || []).slice().sort().join(",");
   return [
+    seed || "",                        // per-refresh seed keeps cache space isolated per reload
     q || "",
     `subj:${s(filters.subjects)}`,
     `grade:${s(filters.grades)}`,
@@ -56,7 +57,7 @@ const INACTIVITY_MS = 1000; // debounce ONLY for input typing
 const PAGE_SIZE = 12;
 
 /* --------------------- component --------------------- */
-export default function ExploreClient({ initial, initialQuery }) {
+export default function ExploreClient({ initial, initialQuery, seed }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -107,10 +108,11 @@ export default function ExploreClient({ initial, initialQuery }) {
     };
   }, [searchParams]);
 
+  // ⬇️ Reset from server-provided initial payload (hard refresh / SSR)
   useEffect(() => {
     setData(initial);
     lastSearchedQueryRef.current = initialQuery || "";
-  }, [initial, initialQuery]);
+  }, [initial, initialQuery]); // keep deps size constant (no seed here)
 
   useEffect(() => {
     return () => {
@@ -172,7 +174,7 @@ export default function ExploreClient({ initial, initialQuery }) {
     }
     setTyping(false);
 
-    const cacheKey = makeCacheKey(nextQ, filters, nextPage);
+    const cacheKey = makeCacheKey(nextQ, filters, nextPage, seed);
     const cached = getCache(cacheKey);
 
     // For URL mode: if we already have cached data, DO NOT fetch again.
@@ -227,6 +229,7 @@ export default function ExploreClient({ initial, initialQuery }) {
           page: nextPage,
           pageSize: PAGE_SIZE,
           ...filters,
+          seed, // include seed for this refresh/session
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -266,7 +269,7 @@ export default function ExploreClient({ initial, initialQuery }) {
     );
     await Promise.all(
       neighbors.map(async (p) => {
-        const key = makeCacheKey(qVal, filters, p);
+        const key = makeCacheKey(qVal, filters, p, seed);
         if (getCache(key)) return;
         try {
           const res = await fetch("/api/presentations/search", {
@@ -277,6 +280,7 @@ export default function ExploreClient({ initial, initialQuery }) {
               page: p,
               pageSize: PAGE_SIZE,
               ...filters,
+              seed, // include seed
             }),
             cache: "no-store",
           });
@@ -325,14 +329,14 @@ export default function ExploreClient({ initial, initialQuery }) {
       setPage(urlPage);
       setLastFilters(filtersFromUrl);
 
-      const initialKey = makeCacheKey(urlQ, filtersFromUrl, urlPage);
+      const initialKey = makeCacheKey(urlQ, filtersFromUrl, urlPage, seed);
       putCache(initialKey, initial); // seed cache
       setData(initial); // ensure immediate render
-      return; // ← important: no network on first mount
+      return; // ← no network on first mount
     }
 
     // For subsequent URL changes (e.g., user navigates with back/forward)
-    const ck = makeCacheKey(urlQ, filtersFromUrl, urlPage);
+    const ck = makeCacheKey(urlQ, filtersFromUrl, urlPage, seed);
     const cached = getCache(ck);
 
     const needsFetch =
@@ -358,7 +362,7 @@ export default function ExploreClient({ initial, initialQuery }) {
       // keep page in sync without network
       setPage(urlPage);
     }
-  }, [searchParams]);
+  }, [searchParams]); // keep deps size constant (no seed here)
 
   const EqualizerLoader = () => (
     <div className="flex items-end gap-1 h-5" aria-label="Loading">
@@ -373,7 +377,7 @@ export default function ExploreClient({ initial, initialQuery }) {
           height: 6px;
           border-radius: 9999px;
           background: #6b21a8;
-          animation: eqPulse 900ms ease-in-out infinite.
+          animation: eqPulse 900ms ease-in-out infinite;
         }
         @keyframes eqPulse {
           0%, 100% { height: 6px; opacity: 0.6; }

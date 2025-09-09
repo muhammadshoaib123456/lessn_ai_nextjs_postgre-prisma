@@ -1,7 +1,8 @@
 // components/PresentationCard.jsx
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 
 function extractImgSrc(htmlOrUrl) {
   if (!htmlOrUrl || typeof htmlOrUrl !== "string") return "";
@@ -29,6 +30,34 @@ function absolutize(urlish) {
 
 export default function PresentationCard({ p, cardHeight }) {
   const [imgOk, setImgOk] = useState(true);
+  const router = useRouter();
+  const ref = useRef(null);
+  const href = `/presentations/${p?.slug ?? ""}`;
+
+  useEffect(() => {
+    if (!ref.current || !p?.slug) return;
+    let obs;
+    try {
+      obs = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              router.prefetch(href);
+              obs.disconnect();
+              break;
+            }
+          }
+        },
+        { rootMargin: "200px 0px" } // prefetch a bit before it fully appears
+      );
+      obs.observe(ref.current);
+    } catch {
+      // no-op if IO not available
+    }
+    return () => {
+      try { obs && obs.disconnect(); } catch {}
+    };
+  }, [router, href, p?.slug]);
 
   if (!p || typeof p !== "object") {
     return (
@@ -56,9 +85,17 @@ export default function PresentationCard({ p, cardHeight }) {
   // Optional: make image get ~56% of the card height (tweak ratio as you like)
   const imgH = Math.max(120, Math.round((cardHeight || 420) * 0.56));
 
+  const prefetch = () => {
+    try { router.prefetch(href); } catch {}
+  };
+
   return (
     <Link
-      href={`/presentations/${p.slug}`}
+      href={href}
+      prefetch
+      ref={ref}
+      onMouseEnter={prefetch}
+      onFocus={prefetch}
       style={{ ["--card-h"]: `${cardHeight || 420}px` }}
       className="group rounded-xl border border-gray-300 shadow-sm overflow-hidden bg-white hover:border-purple-800 h-[var(--card-h)] flex flex-col"
     >

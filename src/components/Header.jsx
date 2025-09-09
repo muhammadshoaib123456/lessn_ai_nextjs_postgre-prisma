@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import HelpPopup from "@/components/HelpPopup";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import ProfileDropdown from "@/components/ProfileDropdown";
 
@@ -28,6 +28,7 @@ const Header = () => {
   const [showSubjectsMobile, setShowSubjectsMobile] = useState(false);
 
   const router = useRouter();
+  const pathname = usePathname(); // current route
 
   // ===== Fetch dropdown data once =====
   useEffect(() => {
@@ -119,6 +120,14 @@ const Header = () => {
     setShowSubjectsDesktop(false);
     router.push(`/explore-library?subjects=${encodeURIComponent(name)}`);
   };
+
+  // Build Login URL:
+  // - If on /explore-library -> /login?next=/explore-library
+  // - Else -> /login (default to homepage after auth)
+  const loginHref =
+    pathname === "/explore-library"
+      ? `/login?next=${encodeURIComponent("/explore-library")}`
+      : "/login";
 
   return (
     <>
@@ -225,7 +234,7 @@ const Header = () => {
             {/* Auth Links OR Profile */}
             <div className="hidden md:flex items-center space-x-6 text-[14px]">
               {!session ? (
-                <Link href="/login" className="flex items-center space-x-1 hover:text-gray-300">
+                <Link href={loginHref} className="flex items-center space-x-1 hover:text-gray-300">
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M3 9a2 2 0 012-2h5V4l5 5-5 5v-3H5a2 2 0 01-2-2z" />
                   </svg>
@@ -400,7 +409,7 @@ const Header = () => {
 
               <hr className="border-white/10 my-2" />
               {!session ? (
-                <Link href="/login" onClick={closeMenu} className="pl-1 hover:text-gray-300">
+                <Link href={loginHref} onClick={closeMenu} className="pl-1 hover:text-gray-300">
                   Login
                 </Link>
               ) : (
@@ -413,10 +422,6 @@ const Header = () => {
                   </Link>
                   <Link href="/pricing" onClick={closeMenu} className="pl-1 hover:text-gray-300">
                     Pricing & Subscription
-                  </Link>
-                  <Link href="/login" onClick={() => closeMenu()} className="pl-1 hover:text-gray-300">
-                    {/* Logout is handled in dropdown; mobile users typically use Login/Account pages */}
-                    {/* (You can also add a separate mobile-only signOut button if you want) */}
                   </Link>
                 </>
               )}
