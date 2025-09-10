@@ -23,7 +23,7 @@ function TeacherSectionClient({
   cardWidth = 320,
   cardHeight = 420,
   gap = 24,
-  leftPad = 24,
+  leftPad = 20,
   peekRight = true,
 
   // short, visible animation

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
-/* -------------------- helpers -------------------- */
+/* ---------------- helpers ---------------- */
 
 function extractThumbSrc(t) {
   if (!t) return null;
@@ -31,7 +31,7 @@ function getAll(sp, key) {
   return String(v).split(",").map((x) => x.trim()).filter(Boolean);
 }
 
-// build `(lower("col") = $1 OR lower("col") = $2 ...)` for raw SQL path
+// raw SQL piece: (lower("col") = $1 OR lower("col") = $2 ...)
 function ciEqOr(col, vals) {
   if (!vals?.length) return null;
   const lowered = vals.map((v) => v.toLowerCase());
@@ -41,69 +41,78 @@ function ciEqOr(col, vals) {
   return Prisma.sql`(${Prisma.join(pieces, Prisma.raw(" OR "))})`;
 }
 
-/* ---- grade normalization (same logic as /api/meta/grades) ---- */
 const titleCase = (s) =>
   String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .trim().toLowerCase().replace(/\s+/g," ")
+    .replace(/\b\w/g,(c)=>c.toUpperCase());
+
+const GRADE_ALIASES = {
+  "Pre-K":["Pre-K","Pre K","Prek","PK","Prekindergarten"],
+  Kindergarten:["Kindergarten","K","KG","Kinder","Kingdergardon"],
+  "First Grade":["First Grade","1st grade"],
+  "Second Grade":["Second Grade","2nd grade"],
+  "Third Grade":["Third Grade","3rd grade"],
+  "Fourth Grade":["Fourth Grade","4th grade"],
+  "Fifth Grade":["Fifth Grade","5th grade"],
+  "Sixth Grade":["Sixth Grade","6th grade"],
+  "Seventh Grade":["Seventh Grade","7th grade"],
+  "Eighth Grade":["Eighth Grade","8th grade"],
+  "High School":["High School"],
+};
 
 function normalizeGrade(raw) {
   const s = String(raw || "").trim().toLowerCase();
   if (!s) return "";
-  if (["pre k", "pre-k", "prek", "pk", "prekindergarten"].includes(s)) return "Pre-K";
-  if (["k", "kg", "kinder", "kindergarten", "kingdergardon"].includes(s)) return "Kindergarten";
+  if (["pre k","pre-k","prek","pk","prekindergarten"].includes(s)) return "Pre-K";
+  if (["k","kg","kinder","kindergarten","kingdergardon"].includes(s)) return "Kindergarten";
   const map = {
-    "1st grade": "First Grade",
-    "first grade": "First Grade",
-    "2nd grade": "Second Grade",
-    "second grade": "Second Grade",
-    "3rd grade": "Third Grade",
-    "third grade": "Third Grade",
-    "4th grade": "Fourth Grade",
-    "fourth grade": "Fourth Grade",
-    "5th grade": "Fifth Grade",
-    "fifth grade": "Fifth Grade",
-    "6th grade": "Sixth Grade",
-    "sixth grade": "Sixth Grade",
-    "7th grade": "Seventh Grade",
-    "seventh grade": "Seventh Grade",
-    "8th grade": "Eighth Grade",
-    "eighth grade": "Eighth Grade",
-    "high school": "High School",
+    "1st grade":"First Grade","first grade":"First Grade",
+    "2nd grade":"Second Grade","second grade":"Second Grade",
+    "3rd grade":"Third Grade","third grade":"Third Grade",
+    "4th grade":"Fourth Grade","fourth grade":"Fourth Grade",
+    "5th grade":"Fifth Grade","fifth grade":"Fifth Grade",
+    "6th grade":"Sixth Grade","sixth grade":"Sixth Grade",
+    "7th grade":"Seventh Grade","seventh grade":"Seventh Grade",
+    "8th grade":"Eighth Grade","eighth grade":"Eighth Grade",
+    "high school":"High School",
   };
   return map[s] || titleCase(raw);
 }
 
-/* -------------------- main handler -------------------- */
+function expandGradeAliases(values) {
+  const out = new Set();
+  for (const v of values || []) {
+    const canon = normalizeGrade(v);
+    (GRADE_ALIASES[canon] || [canon]).forEach((x) => out.add(x));
+  }
+  return Array.from(out);
+}
+
+/* --------------- main --------------- */
 
 export async function POST(req) {
   try {
-    // Parse JSON body if present, otherwise allow POST with no body (prefetchers)
     let body = {};
     const ct = req.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
-      try {
-        body = await req.json();
-      } catch {
-        body = {};
-      }
+      try { body = await req.json(); } catch { body = {}; }
     }
 
-    // Also accept querystring (for GET proxy below and debugging)
     const sp = new URL(req.url).searchParams;
 
     const qRaw = (body.q ?? sp.get("q") ?? "").toString().trim();
     const page = Number(body.page ?? sp.get("page") ?? 1);
     const pageSize = Number(body.pageSize ?? sp.get("pageSize") ?? 12);
-    const seed = (body.seed ?? sp.get("seed") ?? "").toString(); // ⬅️ NEW
+    const seed = (body.seed ?? sp.get("seed") ?? "").toString();
 
-    // NOTE: keep plural keys to match ExploreClient
+    // Extract filters
     const subjectsIn = cleanArr(body.subjects ?? getAll(sp, "subjects")).map(titleCase);
-    const gradesIn   = cleanArr(body.grades   ?? getAll(sp, "grades")).map(normalizeGrade);
-    const topicsIn   = cleanArr(body.topics   ?? getAll(sp, "topics")).map(titleCase);
-    const subsIn     = cleanArr(body.sub_topics ?? getAll(sp, "sub_topics")).map(titleCase);
+    const gradesRaw = cleanArr(body.grades ?? getAll(sp, "grades"));
+    const topicsIn  = cleanArr(body.topics ?? getAll(sp, "topics")).map(titleCase);
+    const subsIn    = cleanArr(body.sub_topics ?? getAll(sp, "sub_topics")).map(titleCase);
+
+    // Grade alias expansion
+    const gradesIn = expandGradeAliases(gradesRaw);
 
     const withAggregates = !!(body.withAggregates ?? (sp.get("withAggregates") === "1"));
 
@@ -112,79 +121,55 @@ export async function POST(req) {
 
     const limit = Math.min(50, Math.max(1, pageSize));
 
-    // ---------- WHERE for raw SQL (case-insensitive facets + text search) ----------
-    const W = [];
-    const subjOr = ciEqOr("subject", subjectsIn);
-    const gradOr = ciEqOr("grade", gradesIn);
-    const topicOr = ciEqOr("topic", topicsIn);
-    const subOr = ciEqOr("sub_topic", subsIn);
-    if (subjOr) W.push(subjOr);
-    if (gradOr) W.push(gradOr);
-    if (topicOr) W.push(topicOr);
-    if (subOr) W.push(subOr);
-
+    // --------- Build a Prisma where object ONCE (stable & safe) ----------
+    const andFilters = [];
+    if (subjectsIn.length) andFilters.push({ OR: subjectsIn.map((s) => ({ subject: { equals: s, mode: "insensitive" } })) });
+    if (gradesIn.length)   andFilters.push({ OR: gradesIn.map((g) => ({ grade:   { equals: g, mode: "insensitive" } })) });
+    if (topicsIn.length)   andFilters.push({ OR: topicsIn.map((t) => ({ topic:   { equals: t, mode: "insensitive" } })) });
+    if (subsIn.length)     andFilters.push({ OR: subsIn.map((s) => ({ sub_topic:{ equals: s, mode: "insensitive" } })) });
     if (hasQ) {
-      const ilike = `%${qLower}%`;
-      // ✅ Combine LIKE and trigram with OR inside a single group
-      W.push(Prisma.sql`
-        (
-          (
-            lower(subject)   LIKE ${ilike} OR
-            lower(topic)     LIKE ${ilike} OR
-            lower(sub_topic) LIKE ${ilike} OR
-            lower(grade)     LIKE ${ilike} OR
-            lower(name)      LIKE ${ilike}
-          )
-          OR
-          (
-            -- pg_trgm's similarity searches (safe if extension exists; otherwise this block simply won't help)
-            lower(subject)   % ${qLower} OR
-            lower(topic)     % ${qLower} OR
-            lower(sub_topic) % ${qLower} OR
-            lower(grade)     % ${qLower} OR
-            lower(name)      % ${qLower}
-          )
-        )
-      `);
+      andFilters.push({
+        OR: [
+          { name: { contains: qRaw, mode: "insensitive" } },
+          { subject: { contains: qRaw, mode: "insensitive" } },
+          { grade: { contains: qRaw, mode: "insensitive" } },
+          { topic: { contains: qRaw, mode: "insensitive" } },
+          { sub_topic: { contains: qRaw, mode: "insensitive" } },
+        ],
+      });
     }
+    const whereObj = andFilters.length ? { AND: andFilters } : {};
 
-    const WHERE = W.length
-      ? Prisma.sql`${Prisma.join(W, Prisma.raw(" AND "))}`
-      : Prisma.sql`TRUE`;
+    // --------- Count (use Prisma — avoids raw “Object” issues) ----------
+    const total = await prisma.presentation.count({ where: whereObj });
 
-    let itemsRaw, total;
-
-    // We need total to compute any seeded window
-    const totalRow = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS c FROM "Presentation" WHERE ${WHERE};
-    `;
-    total = Number(totalRow?.[0]?.c || 0);
-
-    // ----- Seeded window logic (only when there is NO search query) -----
-    // Goal: page 1 shows a different slice each hard refresh, but
-    // paging is deterministic within that refresh (same seed).
+    // Seeded paging for no-search
     const pageNum = Math.max(1, Number(page) || 1);
     let offset = (pageNum - 1) * limit;
-
     if (!hasQ && seed && total > 0) {
       const windows = Math.max(1, total - limit + 1);
-      // simple deterministic hash (djb2-like)
-      const hash = Array.from(String(seed)).reduce(
-        (h, c) => (h * 33 + c.charCodeAt(0)) >>> 0,
-        5381
-      );
-      const baseStart = hash % windows; // 0..windows-1
-      // page-based offset from the seeded base window
+      const hash = Array.from(String(seed)).reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5381);
+      const baseStart = hash % windows;
       offset = baseStart + (pageNum - 1) * limit;
-      // clamp in bounds
-      if (offset + limit > total) {
-        offset = Math.max(0, total - limit);
-      }
+      if (offset + limit > total) offset = Math.max(0, total - limit);
     }
 
+    // Try ranked (pg_trgm) only when user typed something
+    let itemsRaw = null;
     if (hasQ) {
-      // Try fast trigram ranking; if pg_trgm/similarity is missing, we'll fall back.
       try {
+        // Additionally build raw WHERE for ranked path (same filters)
+        const W = [];
+        const subjOr = ciEqOr("subject", subjectsIn);
+        const gradOr = ciEqOr("grade", gradesIn);
+        const topicOr = ciEqOr("topic", topicsIn);
+        const subOr   = ciEqOr("sub_topic", subsIn);
+        if (subjOr) W.push(subjOr);
+        if (gradOr) W.push(gradOr);
+        if (topicOr) W.push(topicOr);
+        if (subOr)   W.push(subOr);
+        const WHERE_SQL = W.length ? Prisma.sql`${Prisma.join(W, Prisma.raw(" AND "))}` : Prisma.sql`TRUE`;
+
         itemsRaw = await prisma.$queryRaw`
           WITH candidates AS (
             SELECT
@@ -198,7 +183,7 @@ export async function POST(req) {
                 similarity(lower(name), ${qLower})
               ) AS sim_max
             FROM "Presentation"
-            WHERE ${WHERE}
+            WHERE ${WHERE_SQL}
             ORDER BY sim_max DESC
             LIMIT 2000
           ),
@@ -231,63 +216,21 @@ export async function POST(req) {
           OFFSET ${offset} LIMIT ${limit};
         `;
       } catch {
-        // fall through to Prisma fallback below
+        itemsRaw = null; // fall back below
       }
     }
 
     if (!itemsRaw) {
-      // ---------- Prisma fallback (no pg_trgm or empty q) ----------
-      const andFilters = [];
-
-      if (subjectsIn.length) {
-        andFilters.push({
-          OR: subjectsIn.map((s) => ({ subject: { equals: s, mode: "insensitive" } })),
-        });
-      }
-      if (gradesIn.length) {
-        andFilters.push({
-          OR: gradesIn.map((g) => ({ grade: { equals: g, mode: "insensitive" } })),
-        });
-      }
-      if (topicsIn.length) {
-        andFilters.push({
-          OR: topicsIn.map((t) => ({ topic: { equals: t, mode: "insensitive" } })),
-        });
-      }
-      if (subsIn.length) {
-        andFilters.push({
-          OR: subsIn.map((s) => ({ sub_topic: { equals: s, mode: "insensitive" } })),
-        });
-      }
-      if (hasQ) {
-        andFilters.push({
-          OR: [
-            { name: { contains: qRaw, mode: "insensitive" } },
-            { subject: { contains: qRaw, mode: "insensitive" } },
-            { grade: { contains: qRaw, mode: "insensitive" } },
-            { topic: { contains: qRaw, mode: "insensitive" } },
-            { sub_topic: { contains: qRaw, mode: "insensitive" } },
-          ],
-        });
-      }
-
-      const whereObj = andFilters.length ? { AND: andFilters } : {};
-
+      // Prisma fallback
       itemsRaw = await prisma.presentation.findMany({
         where: whereObj,
-        orderBy: [{ id: "asc" }], // stable ordering for deterministic paging
+        orderBy: [{ id: "asc" }],
         take: Number(limit),
         skip: Math.max(0, offset),
         select: {
-          id: true,
-          slug: true,
-          name: true,
-          subject: true,
-          grade: true,
-          topic: true,
-          sub_topic: true,
-          thumbnail: true,
-          thumbnail_alt_text: true,
+          id: true, slug: true, name: true,
+          subject: true, grade: true, topic: true, sub_topic: true,
+          thumbnail: true, thumbnail_alt_text: true,
         },
       });
     }
@@ -297,7 +240,7 @@ export async function POST(req) {
       thumbnail: extractThumbSrc(i.thumbnail),
     }));
 
-    // Aggregates (optional)
+    // Aggregates optional
     let aggregates = null;
     if (withAggregates) {
       const [subjectsAgg, gradesAgg, topicsAgg, subtopicsAgg] = await Promise.all([
@@ -334,7 +277,6 @@ export async function POST(req) {
   }
 }
 
-// Handy GET tester: /api/presentations/search?q=&subjects=English&topics=Grammar&seed=abc123
 export async function GET(req) {
   const url = new URL(req.url, "http://localhost");
   const sp = url.searchParams;
@@ -347,7 +289,7 @@ export async function GET(req) {
     topics: getAll(sp, "topics"),
     sub_topics: getAll(sp, "sub_topics"),
     withAggregates: sp.get("withAggregates") === "1",
-    seed: sp.get("seed") || "", // ⬅️ pass through seed on GET
+    seed: sp.get("seed") || "",
   };
   return POST(
     new Request(req.url, {

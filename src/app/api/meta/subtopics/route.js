@@ -8,11 +8,21 @@ export const prisma = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const titleCase = (s) =>
-  String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  String(s || "").trim().toLowerCase().replace(/\s+/g," ").replace(/\b\w/g,(c)=>c.toUpperCase());
+
+const GRADE_ALIASES = {
+  "Pre-K": ["Pre-K","Pre K","Prek","PK","Prekindergarten"],
+  Kindergarten: ["Kindergarten","K","KG","Kinder","Kingdergardon"],
+  "First Grade": ["First Grade","1st grade"],
+  "Second Grade": ["Second Grade","2nd grade"],
+  "Third Grade": ["Third Grade","3rd grade"],
+  "Fourth Grade": ["Fourth Grade","4th grade"],
+  "Fifth Grade": ["Fifth Grade","5th grade"],
+  "Sixth Grade": ["Sixth Grade","6th grade"],
+  "Seventh Grade": ["Seventh Grade","7th grade"],
+  "Eighth Grade": ["Eighth Grade","8th grade"],
+  "High School": ["High School"],
+};
 
 function readList(sp, key) {
   const repeated = typeof sp.getAll === "function" ? sp.getAll(key) : [];
@@ -26,27 +36,51 @@ function readList(sp, key) {
   return [];
 }
 
+function buildCIEqualsOr(field, values) {
+  const vals = (values || []).filter(Boolean);
+  if (!vals.length) return null;
+  return { OR: vals.map((v) => ({ [field]: { equals: v, mode: "insensitive" } })) };
+}
+
+function expandGradeAliases(values) {
+  const out = new Set();
+  for (const v of values || []) {
+    const canon = titleCase(v);
+    const aliases = GRADE_ALIASES[canon] || [canon];
+    aliases.forEach((x) => out.add(x));
+  }
+  return Array.from(out);
+}
+
 export async function GET(req) {
   try {
     const sp = req.nextUrl?.searchParams || new URL(req.url).searchParams;
 
     const topics = readList(sp, "topics");
     const subjects = readList(sp, "subjects");
-    const grades = readList(sp, "grades");
+    const gradesIn = readList(sp, "grades");
 
     const q = (sp.get("q") || "").trim().toLowerCase();
     const limitRaw = Number(sp.get("limit") || 500);
     const limit = Math.min(Number.isFinite(limitRaw) ? limitRaw : 500, 1000);
 
-    const where = { AND: [{ NOT: [{ sub_topic: null }, { sub_topic: "" }] }] };
-    if (subjects.length) where.AND.push({ subject: { in: subjects, mode: "insensitive" } });
-    if (grades.length) where.AND.push({ grade: { in: grades, mode: "insensitive" } });
-    if (topics.length) where.AND.push({ topic: { in: topics, mode: "insensitive" } });
-    if (q) where.AND.push({ sub_topic: { contains: q, mode: "insensitive" } });
+    const whereAnd = [{ NOT: [{ sub_topic: null }, { sub_topic: "" }] }];
+
+    const subjOr = buildCIEqualsOr("subject", subjects);
+    if (subjOr) whereAnd.push(subjOr);
+
+    const gradesExpanded = expandGradeAliases(gradesIn);
+    const gradeOr = buildCIEqualsOr("grade", gradesExpanded);
+    if (gradeOr) whereAnd.push(gradeOr);
+
+    const topicOr = buildCIEqualsOr("topic", topics);
+    if (topicOr) whereAnd.push(topicOr);
+
+    if (q) whereAnd.push({ sub_topic: { contains: q, mode: "insensitive" } });
 
     const grouped = await prisma.presentation.groupBy({
       by: ["sub_topic"],
-      where,
+      where: { AND: whereAnd },
       _count: { _all: true },
       orderBy: { sub_topic: "asc" },
     });

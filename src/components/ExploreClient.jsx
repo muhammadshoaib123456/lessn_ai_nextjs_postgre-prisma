@@ -42,7 +42,7 @@ function eqArr(a = [], b = []) {
 function makeCacheKey(q, filters, page, seed) {
   const s = (arr) => (arr || []).slice().sort().join(",");
   return [
-    seed || "",                        // per-refresh seed keeps cache space isolated per reload
+    seed || "",
     q || "",
     `subj:${s(filters.subjects)}`,
     `grade:${s(filters.grades)}`,
@@ -53,7 +53,7 @@ function makeCacheKey(q, filters, page, seed) {
 }
 
 /* --------------------- tune UX here --------------------- */
-const INACTIVITY_MS = 1000; // debounce ONLY for input typing
+const INACTIVITY_MS = 1000;
 const PAGE_SIZE = 12;
 
 /* --------------------- component --------------------- */
@@ -74,28 +74,23 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
 
   const [showFilters, setShowFilters] = useState(false);
 
-  // UX flags
-  const [loading, setLoading] = useState(false); // full (hard) loader
-  const [softLoading, setSoftLoading] = useState(false); // dim cards on page-jumps
-  const [typing, setTyping] = useState(false);   // ONLY for input debounce visual
+  const [loading, setLoading] = useState(false);
+  const [softLoading, setSoftLoading] = useState(false);
+  const [typing, setTyping] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  // request / debounce control
   const abortRef = useRef(null);
   const debounceRef = useRef(null);
   const reqIdRef = useRef(0);
   const composingRef = useRef(false);
 
-  // "distinct until changed" guards
   const lastSearchedQueryRef = useRef(q);
   const pendingQueryRef = useRef(q);
 
-  // simple in-memory page cache
-  const cacheRef = useRef(new Map()); // key -> { items, total }
+  const cacheRef = useRef(new Map());
   const putCache = (key, value) => cacheRef.current.set(key, value);
   const getCache = (key) => cacheRef.current.get(key);
 
-  // track if user interacted (to enable prefetch only after that)
   const userInteractedRef = useRef(false);
 
   const urlDefaults = useMemo(() => {
@@ -108,11 +103,11 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     };
   }, [searchParams]);
 
-  // ⬇️ Reset from server-provided initial payload (hard refresh / SSR)
+  // Reset from SSR payload
   useEffect(() => {
     setData(initial);
     lastSearchedQueryRef.current = initialQuery || "";
-  }, [initial, initialQuery]); // keep deps size constant (no seed here)
+  }, [initial, initialQuery]);
 
   useEffect(() => {
     return () => {
@@ -121,19 +116,15 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     };
   }, []);
 
-  /** Debounced trigger — schedules exactly one search after input inactivity */
   function scheduleDebounced(nextQ, nextPage = 1, filters = lastFilters) {
     pendingQueryRef.current = nextQ;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    setTyping(true); // show typing loader ONLY for input
+    setTyping(true);
 
     debounceRef.current = setTimeout(() => {
       setTyping(false);
-
       const finalQ = pendingQueryRef.current.trim();
 
-      // Distinct until changed
       if (
         finalQ === lastSearchedQueryRef.current &&
         nextPage === page &&
@@ -145,29 +136,20 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         return;
       }
 
-      // always search page 1 when query text changed
       const shouldResetPage = finalQ !== lastSearchedQueryRef.current;
       const effPage = shouldResetPage ? 1 : nextPage;
 
-      userInteractedRef.current = true; // mark user action
+      userInteractedRef.current = true;
       runSearch({ q: finalQ, page: effPage, filters, mode: "debounced" });
     }, INACTIVITY_MS);
   }
 
-  /**
-   * Core search
-   * mode:
-   * - "page": fast page navigation → optimistic page + soft loader (no debounce)
-   * - "filter" / "debounced" / "enter" / "blur": hard loader (no debounce)
-   * - "url": **silent** sync → no loader, no prefetch, only fetch if not cached
-   */
   async function runSearch(opts = {}, trigger = "other") {
     const nextQ = (opts.q ?? q).trim();
     const nextPage = opts.page ?? page;
     const filters = opts.filters ?? lastFilters;
     const mode = opts.mode ?? trigger;
 
-    // cancel pending input debounce for immediate actions
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
@@ -177,7 +159,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     const cacheKey = makeCacheKey(nextQ, filters, nextPage, seed);
     const cached = getCache(cacheKey);
 
-    // For URL mode: if we already have cached data, DO NOT fetch again.
     if (mode === "url" && cached) {
       startTransition(() => {
         setPage(nextPage);
@@ -185,10 +166,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         const qs = buildURLFromState({ q: nextQ, page: nextPage, filters });
         if (!sameSearch(qs)) router.replace(`/explore-library?${qs}`, { scroll: false });
       });
-      return; // <- exit early: no network, no prefetch, no loaders
+      return;
     }
 
-    // abort in-flight
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -196,10 +176,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
 
     const isPageNav = mode === "page";
 
-    // Decide loaders
     if (mode === "url") {
       setSoftLoading(false);
-      setLoading(false); // silent
+      setLoading(false);
     } else if (isPageNav) {
       setSoftLoading(true);
       setLoading(false);
@@ -208,13 +187,10 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
       setLoading(true);
     }
 
-    // Update URL & page immediately
     startTransition(() => {
       setPage(nextPage);
       const qs = buildURLFromState({ q: nextQ, page: nextPage, filters });
-      if (!sameSearch(qs)) {
-        router.replace(`/explore-library?${qs}`, { scroll: false });
-      }
+      if (!sameSearch(qs)) router.replace(`/explore-library?${qs}`, { scroll: false });
       if (cached) setData(cached);
     });
 
@@ -229,7 +205,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
           page: nextPage,
           pageSize: PAGE_SIZE,
           ...filters,
-          seed, // include seed for this refresh/session
+          seed,
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -245,14 +221,12 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         setData(json);
       });
 
-      // Prefetch neighbors ONLY after a user action (not on URL loads)
       if (mode !== "url" && userInteractedRef.current) {
         prefetchNeighbors(nextQ, filters, nextPage, json?.total || 0);
       }
     } catch (e) {
-      if (e?.name !== "AbortError") {
-        // optionally toast/log
-      }
+      // optional: toast/log
+      // console.error(e);
     } finally {
       if (reqIdRef.current === myReqId) {
         setLoading(false);
@@ -261,12 +235,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     }
   }
 
-  // Prefetch next/prev pages (if within range and not cached)
   async function prefetchNeighbors(qVal, filters, currentPage, total) {
     const totalPages = Math.max(1, Math.ceil((total || 0) / PAGE_SIZE));
-    const neighbors = [currentPage - 1, currentPage + 1].filter(
-      (p) => p >= 1 && p <= totalPages
-    );
+    const neighbors = [currentPage - 1, currentPage + 1].filter((p) => p >= 1 && p <= totalPages);
     await Promise.all(
       neighbors.map(async (p) => {
         const key = makeCacheKey(qVal, filters, p, seed);
@@ -280,7 +251,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
               page: p,
               pageSize: PAGE_SIZE,
               ...filters,
-              seed, // include seed
+              seed,
             }),
             cache: "no-store",
           });
@@ -288,20 +259,16 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
             const json = await res.json();
             putCache(key, json);
           }
-        } catch {
-          /* ignore prefetch errors */
-        }
+        } catch { /* ignore prefetch errors */ }
       })
     );
   }
 
   function onApply(filters) {
     userInteractedRef.current = true;
-    // clear page-scope cache when filters change (new query space)
-    cacheRef.current = new Map();
+    cacheRef.current = new Map();        // clear page cache when filters change
     setLastFilters(filters);
     setShowFilters(false);
-    // immediate search (NO debounce), reset to page 1
     runSearch({ q: pendingQueryRef.current.trim(), page: 1, filters, mode: "filter" });
   }
 
@@ -322,7 +289,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     if (firstLoadRef.current) {
       firstLoadRef.current = false;
 
-      // seed from URL WITHOUT fetching again
       setQ(urlQ);
       pendingQueryRef.current = urlQ;
       lastSearchedQueryRef.current = urlQ;
@@ -330,12 +296,11 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
       setLastFilters(filtersFromUrl);
 
       const initialKey = makeCacheKey(urlQ, filtersFromUrl, urlPage, seed);
-      putCache(initialKey, initial); // seed cache
-      setData(initial); // ensure immediate render
-      return; // ← no network on first mount
+      putCache(initialKey, initial);
+      setData(initial);
+      return;
     }
 
-    // For subsequent URL changes (e.g., user navigates with back/forward)
     const ck = makeCacheKey(urlQ, filtersFromUrl, urlPage, seed);
     const cached = getCache(ck);
 
@@ -349,20 +314,17 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         !eqArr(filtersFromUrl.sub_topics, lastFilters.sub_topics)
       );
 
-    // Always reflect URL state in UI
     setQ(urlQ);
     pendingQueryRef.current = urlQ;
     setLastFilters(filtersFromUrl);
     if (cached) setData(cached);
 
     if (needsFetch) {
-      // Silent sync (no loader, no prefetch) and only if not cached
       runSearch({ q: urlQ, page: urlPage, filters: filtersFromUrl, mode: "url" });
     } else {
-      // keep page in sync without network
       setPage(urlPage);
     }
-  }, [searchParams]); // keep deps size constant (no seed here)
+  }, [searchParams]); // keep deps size constant
 
   const EqualizerLoader = () => (
     <div className="flex items-end gap-1 h-5" aria-label="Loading">
@@ -371,18 +333,8 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
       <span className="eqbar" style={{ animationDelay: "240ms" }} />
       <span className="eqbar" style={{ animationDelay: "360ms" }} />
       <style jsx>{`
-        .eqbar {
-          display: inline-block;
-          width: 4px;
-          height: 6px;
-          border-radius: 9999px;
-          background: #6b21a8;
-          animation: eqPulse 900ms ease-in-out infinite;
-        }
-        @keyframes eqPulse {
-          0%, 100% { height: 6px; opacity: 0.6; }
-          50%      { height: 18px; opacity: 1; }
-        }
+        .eqbar { display:inline-block; width:4px; height:6px; border-radius:9999px; background:#6b21a8; animation:eqPulse 900ms ease-in-out infinite; }
+        @keyframes eqPulse { 0%,100%{height:6px; opacity:0.6;} 50%{height:18px; opacity:1;} }
       `}</style>
     </div>
   );
@@ -400,7 +352,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
   );
 
   const isBusy = loading || isPending;
-  const showTypingLoader = typing && !loading; // typing indicator only while input-debouncing
+  const showTypingLoader = typing && !loading;
   const gridClass = softLoading ? "opacity-70 transition-opacity" : "";
 
   return (
@@ -414,7 +366,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
               setQ(val);
               if (composingRef.current) return;
               cacheRef.current = new Map();
-              // DEBOUNCE APPLIES ONLY HERE (input search)
               scheduleDebounced(val, 1);
             }}
             onKeyDown={(e) => {
@@ -423,7 +374,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
                 setTyping(false);
                 cacheRef.current = new Map();
                 userInteractedRef.current = true;
-                // immediate search on Enter (NO debounce)
                 runSearch({ q: e.currentTarget.value.trim(), page: 1, mode: "enter" });
               }
             }}
@@ -433,26 +383,21 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
                 setTyping(false);
                 cacheRef.current = new Map();
                 userInteractedRef.current = true;
-                // immediate search on blur (NO debounce)
                 runSearch({ q: e.currentTarget.value.trim(), page: 1, mode: "blur" });
               }
             }}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
+            onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={(e) => {
               composingRef.current = false;
               const val = e.currentTarget.value;
               setQ(val);
               cacheRef.current = new Map();
               userInteractedRef.current = true;
-              // DEBOUNCE for IME-completed input only
               scheduleDebounced(val, 1);
             }}
             placeholder="Search in Library"
             className="w-full py-3 pl-4 pr-12 border-2 border-purple-600 rounded-full outline-none focus:ring-2 focus:ring-purple-300"
           />
-          {/* Show the animated typing loader ONLY during input debounce */}
           {showTypingLoader && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2">
               <EqualizerLoader />
@@ -461,14 +406,17 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         </div>
 
         <button
-          onClick={() => setShowFilters(true)}
+          onClick={() => {
+            // when opening, allow FilterPopup to apply defaults once
+            // (FilterPopup tracks this internally)
+            setShowFilters(true);
+          }}
           className="px-8 py-3 border-2 border-purple-600 text-purple-600 rounded-full hover:bg-purple-600 hover:text-white"
         >
           Filters
         </button>
       </div>
 
-      {/* Hard searches show skeleton; page jumps keep content and dim */}
       {isBusy && !softLoading ? (
         <SkeletonGrid count={6} />
       ) : (
@@ -486,11 +434,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         onChange={(n) => {
           if (n === page) return;
           userInteractedRef.current = true;
-          // Immediate page change (NO debounce)
-          runSearch(
-            { q: pendingQueryRef.current.trim(), page: n, mode: "page", filters: lastFilters },
-            "page"
-          );
+          runSearch({ q: pendingQueryRef.current.trim(), page: n, mode: "page", filters: lastFilters }, "page");
         }}
       />
 

@@ -1,5 +1,4 @@
-// app/api/meta/filters/route.js
-export const revalidate = 3600; // cache for 1h
+export const revalidate = 3600;
 
 import { prisma } from "@/lib/prisma";
 

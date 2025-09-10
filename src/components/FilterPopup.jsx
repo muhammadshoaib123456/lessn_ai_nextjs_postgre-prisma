@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 
 // helpers
 const normalize = (s) => String(s || "").trim();
@@ -17,30 +17,28 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
   const [topicSearch, setTopicSearch] = useState("");
   const [subTopicSearch, setSubTopicSearch] = useState("");
 
-  // 🔒 Lock background scroll when popup is open (restores exact scroll position on close)
+  // Track if we've applied defaults already (avoid re-checking on subsequent fetches)
+  const appliedDefaultsRef = useRef(false);
+
+  // 🔒 Lock background scroll when popup is open
   useEffect(() => {
     if (!isOpen) return;
-
     const { body } = document;
     const scrollY = window.scrollY;
     const prevStyle = body.getAttribute("style") || "";
-
-    // Lock
     body.style.overflow = "hidden";
     body.style.position = "fixed";
     body.style.top = `-${scrollY}px`;
     body.style.left = "0";
     body.style.right = "0";
     body.style.width = "100%";
-
     return () => {
-      // Restore
       body.setAttribute("style", prevStyle);
       window.scrollTo(0, scrollY);
     };
   }, [isOpen]);
 
-  // selected names
+  // Selected names
   const selectedSubjectNames = useMemo(
     () => subjects.filter((s) => s.checked).map((s) => s.name),
     [subjects]
@@ -62,7 +60,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
   const selectedTopicObjs = useMemo(() => topics.filter((t) => t.checked), [topics]);
   const selectedSubTopicObjs = useMemo(() => subTopics.filter((s) => s.checked), [subTopics]);
 
-  /* ── 1) Load Subjects & Grades on open ───────── */
+  /* 1) Subjects & Grades (mutually constraining, but independent selection allowed) */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
@@ -73,51 +71,63 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
 
     (async () => {
       try {
-        const res = await fetch("/api/meta/filters", { cache: "no-store" });
-        const data = await res.json();
-        const subj = Array.isArray(data?.subjects) ? data.subjects : [];
-        const grad = Array.isArray(data?.grades) ? data.grades : [];
+        // GRADES filtered by selected subjects (if any). If none → global grades.
+        const gradesURL = new URL("/api/meta/grades", window.location.origin);
+        const subjCsv = csv(selectedSubjectNames);
+        if (subjCsv) gradesURL.searchParams.set("subjects", subjCsv);
+        const gradesRes = await fetch(gradesURL.toString(), { cache: "no-store" });
+        const gradesArr = (await gradesRes.json()) || [];
+
+        // SUBJECTS filtered by selected grades (if any). If none → global subjects.
+        const subjectsURL = new URL("/api/meta/subjects", window.location.origin);
+        const gradeCsv = csv(selectedGradeNames);
+        if (gradeCsv) subjectsURL.searchParams.set("grades", gradeCsv);
+        const subjectsRes = await fetch(subjectsURL.toString(), { cache: "no-store" });
+        const subjectsArr = (await subjectsRes.json()) || [];
+
         if (aborted) return;
 
-        setSubjects(
-          subj.map((s) => {
-            const name = String(s.name || "");
-            return {
-              id: keyOf(name),
-              name,
-              count: Number(s.count || 0),
-              checked: defSubjects.has(keyOf(name)),
-            };
-          })
-        );
-
-        setGrades(
-          grad.map((g) => {
+        setGrades((prev) => {
+          const prevChecked = new Map(prev.map((g) => [g.id, g.checked]));
+          return gradesArr.map((g) => {
             const name = String(g.name || "");
-            return {
-              id: keyOf(name),
-              name,
-              count: Number(g.count || 0),
-              checked: defGrades.has(keyOf(name)),
-            };
-          })
-        );
+            const id = keyOf(name);
+            const wasChecked = prevChecked.get(id) === true;
+            const isDefault = !appliedDefaultsRef.current && defGrades.has(id);
+            return { id, name, count: Number(g.count || 0), checked: wasChecked || isDefault };
+          });
+        });
+
+        setSubjects((prev) => {
+          const prevChecked = new Map(prev.map((s) => [s.id, s.checked]));
+          const next = subjectsArr.map((s) => {
+            const name = String(s.name || "");
+            const id = keyOf(name);
+            const wasChecked = prevChecked.get(id) === true;
+            const isDefault = !appliedDefaultsRef.current && defSubjects.has(id);
+            return { id, name, count: Number(s.count || 0), checked: wasChecked || isDefault };
+          });
+          // After first mapping we consider defaults applied (prevents re-checking later)
+          if (!appliedDefaultsRef.current) appliedDefaultsRef.current = true;
+          return next;
+        });
       } catch (e) {
-        console.error("FilterPopup: load /api/meta/filters failed", e);
+        console.error("FilterPopup: load dependent subjects/grades failed", e);
       }
     })();
 
     return () => { aborted = true; };
+    // NOTE: don't include defaults in deps; we only apply them once when popup opens
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, JSON.stringify(defaults)]);
+  }, [isOpen, JSON.stringify(selectedSubjectNames), JSON.stringify(selectedGradeNames)]);
 
-  /* ── 2) Load Topics when: open, Subject/Grade change, Topic search change ───── */
+  // ❌ REMOVED: the old "auto-check single grade when a subject is selected" effect.
+  // That behavior made grades sticky and prevented pure grade-only flows.
+
+  /* 2) Topics load on open / subject or grade changes / topic search */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
-
-    const def = typeof defaults === "object" ? defaults : {};
-    const defTopics = new Set([...(def.topics || []), def.topic].filter(Boolean).map(keyOf));
 
     (async () => {
       try {
@@ -139,8 +149,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               const name = String(t.name || "");
               const id = keyOf(name);
               const wasChecked = prevChecked.get(id) === true;
-              const isDefault = defTopics.has(id);
-              return { id, name, count: Number(t.count || 0), checked: wasChecked || isDefault };
+              return { id, name, count: Number(t.count || 0), checked: wasChecked };
             })
             .filter((t) => t.name.trim());
         });
@@ -150,15 +159,12 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
     })();
 
     return () => { aborted = true; };
-  }, [isOpen, JSON.stringify(selectedSubjectNames), JSON.stringify(selectedGradeNames), topicSearch, JSON.stringify(defaults)]);
+  }, [isOpen, JSON.stringify(selectedSubjectNames), JSON.stringify(selectedGradeNames), topicSearch]);
 
-  /* ── 3) Load Sub-Topics when: open, Topics/Subject/Grade change, SubTopic search ─ */
+  /* 3) Sub-Topics load on open / topic/subject/grade changes / search */
   useEffect(() => {
     if (!isOpen) return;
     let aborted = false;
-
-    const def = typeof defaults === "object" ? defaults : {};
-    const defSubs = new Set([...(def.sub_topics || []), def.subtopic].filter(Boolean).map(keyOf));
 
     (async () => {
       try {
@@ -182,8 +188,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
               const name = String(s.name || "");
               const id = keyOf(name);
               const wasChecked = prevChecked.get(id) === true;
-              const isDefault = defSubs.has(id);
-              return { id, name, count: Number(s.count || 0), checked: wasChecked || isDefault };
+              return { id, name, count: Number(s.count || 0), checked: wasChecked };
             })
             .filter((s) => s.name.trim());
         });
@@ -193,14 +198,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
     })();
 
     return () => { aborted = true; };
-  }, [
-    isOpen,
-    JSON.stringify(selectedTopicNames),
-    JSON.stringify(selectedSubjectNames),
-    JSON.stringify(selectedGradeNames),
-    subTopicSearch,
-    JSON.stringify(defaults),
-  ]);
+  }, [isOpen, JSON.stringify(selectedTopicNames), JSON.stringify(selectedSubjectNames), JSON.stringify(selectedGradeNames), subTopicSearch]);
 
   if (!isOpen) return null;
 
@@ -211,16 +209,13 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
     } else if (type === "grade") {
       setGrades((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
     }
-    // Topics/Subtopics refetch automatically via effects
+    // Topics/Subtopics refetch via effects (no auto-checks anywhere)
   };
   const toggleTopic = (id) => setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
   const toggleSubTopic = (id) => setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it)));
 
-  // remove buttons on chips (explicit uncheck)
-  const removeTopic = (id) =>
-    setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
-  const removeSubTopic = (id) =>
-    setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
+  const removeTopic = (id) => setTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
+  const removeSubTopic = (id) => setSubTopics((prev) => prev.map((it) => (it.id === id ? { ...it, checked: false } : it)));
 
   const selectAll = (type) => {
     if (type === "topics") setTopics((prev) => prev.map((it) => ({ ...it, checked: true })));
@@ -242,7 +237,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
       grades: selectedGrades,
       topics: selectedTopics,
       sub_topics: selectedSubs,
-      // single-value fallbacks for backward compatibility
+      // convenience single-pick (unchanged)
       topic: selectedTopics[0] || "",
       subtopic: selectedSubs[0] || "",
     });
@@ -275,9 +270,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                 <label key={subject.id} className="flex items-center space-x-2 cursor-pointer">
                   <input type="checkbox" checked={subject.checked} onChange={() => toggleChecked(subject.id, "subject")} className="hidden" />
                   <span
-                    className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${
-                      subject.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400 text-transparent"
-                    }`}
+                    className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${subject.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400 text-transparent"}`}
                   >
                     <svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M1.49512 4.5144L4.99512 8.0144L11.9951 1.0144" stroke="white" strokeWidth="1.5" />
@@ -288,6 +281,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                   </span>
                 </label>
               ))}
+              {subjects.length === 0 && <div className="text-gray-500 text-xs">No subjects match your selection.</div>}
             </div>
           </div>
 
@@ -301,9 +295,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                 <label key={grade.id} className="flex items-center space-x-2 cursor-pointer">
                   <input type="checkbox" checked={grade.checked} onChange={() => toggleChecked(grade.id, "grade")} className="hidden" />
                   <span
-                    className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${
-                      grade.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400"
-                    }`}
+                    className={`w-4 h-4 flex items-center justify-center rounded-sm border text-[10px] ${grade.checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-gray-400"}`}
                   >
                     {grade.checked && "✔"}
                   </span>
@@ -312,6 +304,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                   </span>
                 </label>
               ))}
+              {grades.length === 0 && <div className="text-gray-500 text-xs">No grades match your selection.</div>}
             </div>
           </div>
 
@@ -435,9 +428,7 @@ export default function FilterPopup({ isOpen, onClose, defaults = {}, onApply })
                 ))}
                 {subTopics.length === 0 && (
                   <div className="text-gray-500 text-xs">
-                    {selectedTopicNames.length
-                      ? "No sub-topics found for selected topics."
-                      : "Pick one or more topics to see sub-topics."}
+                    {selectedTopicNames.length ? "No sub-topics found for selected topics." : "Pick one or more topics to see sub-topics."}
                   </div>
                 )}
               </div>
