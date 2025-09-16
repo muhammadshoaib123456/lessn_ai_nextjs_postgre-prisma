@@ -9,8 +9,12 @@ export default function Paginator({ page, total, pageSize=12, onChange }) {
     <div className="flex items-center justify-center gap-2 mt-8">
       <button disabled={start===1} onClick={()=>onChange(start-1)} className="px-2 py-1 disabled:opacity-40">Prev</button>
       {nums.map(n=>(
-        <button key={n} onClick={()=>onChange(n)}
-          className={`px-3 py-1 rounded ${n===page?'bg-purple-600 text-white':'border'}`}>
+        <button 
+          key={n} 
+          onClick={()=>onChange(n)}
+          className={`px-3 py-1 rounded ${n===page?'bg-purple-600 text-white':'border'}`}
+          disabled={n > pages}   // safety: never allow beyond last page
+        >
           {n}
         </button>
       ))}

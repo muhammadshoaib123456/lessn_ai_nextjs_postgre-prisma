@@ -1,5 +1,5 @@
 // components/TeacherSectionClient.jsx
-"use client"; // ✅ Next.js Client Component: allows useEffect/useState and DOM APIs
+"use client";
 
 import React, {
   useEffect,
@@ -12,86 +12,69 @@ import React, {
 import Link from "next/link";
 import PresentationCard from "@/components/PresentationCard";
 
+function mod(n, m) {
+  return ((n % m) + m) % m;
+}
+
 /**
- * TeacherSectionClient
- *
- * UI: A horizontally scrollable carousel of presentation cards with left/right arrows,
- *      a section title, and an optional CTA button under it.
- *
- * CUSTOMIZE SIZES / SPACING / COLORS:
- * - Title text: h2 element Tailwind classes (font-size: 'text-3xl', color 'text-gray-800', margin 'mb-8')
- * - Card sizes: 'cardWidth' and 'cardHeight' props → reflected via CSS variables --card-w/--card-h
- * - Gap between cards: 'gap' prop → CSS variable --card-gap
- * - Left/right padding: 'leftPad' and computed right pad → CSS variables --left-pad/--right-pad
- * - Arrow button colors: className bg-[#9500DE] hover:bg... etc
- * - CTA button styles: Tailwind classes on <Link> near bottom
- *
- * RESPONSIVE (MOBILE → DESKTOP):
- * - Most dimensions are fixed via props (cardWidth/cardHeight). Adjust props for global size changes.
- * - Check responsive utilities, e.g., "md:px-0" (Mobile first). "md:*" applies at ≥768px.
- * - Container section uses "max-w-[1366px]" (change this to grow/shrink overall width).
+ * This version supports a virtually-infinite list backed by server pagination.
+ * Props:
+ * - total: total rows in DB
+ * - seedOffset: where the server seeded the first batch from (random)
+ * - pageSize: server page window (same as API limit)
+ * - apiHref: route to fetch ?offset=..&limit=..
+ * - initial: first batch of items (length <= pageSize)
  */
-
 function TeacherSectionClient({
-  items = [],                 // ✅ Array of cards to show (PresentationCard consumes each item)
-  title = "Teachers love these", // ✅ Section headline text (edit here to change the title string)
-  showCTA = true,             // ✅ Toggle CTA button
-  ctaHref = "/explore-library", // ✅ CTA destination
-  ctaLabel = "Explore Lessn Library", // ✅ CTA text label
+  // server-provided
+  initial = [],
+  total = 0,
+  seedOffset = 0,
+  pageSize = 24,
+  apiHref = "/api/presentations/slider",
 
-  // ======= FIXED SIZING + SPACING CONTROLS (edit these to impact layout) =======
-  cardWidth = 320,            // ✅ Width (px) of each card → change here to enlarge/shrink cards
-  cardHeight = 420,           // ✅ Height (px) of each card → change for taller/shorter cards
-  gap = 24,                   // ✅ Horizontal gap (px) between cards
-  leftPad = 20,               // ✅ Left padding (px) of the carousel list
-  peekRight = true,           // ✅ If true, reduces right padding so next card “peeks in”
+  title = "Teachers love these",
+  showCTA = true,
+  ctaHref = "/explore-library",
+  ctaLabel = "Explore Lessn Library",
 
-  // ======= ANIMATION DURATION =======
-  animationMs = 160,          // ✅ Scroll animation duration (ms). Increase for slower glide
+  cardWidth = 320,
+  cardHeight = 420,
+  gap = 24,
+  leftPad = 20,
+  peekRight = true,
+
+  animationMs = 160,
 }) {
-  // ======= DOM REFS =======
-  const scrollerRef = useRef(null);   // ✅ Ref to scroll container (the horizontal scroller)
-  const gridRef = useRef(null);       // ✅ Ref to the grid that lays out cards in columns
-  const cardWidthRef = useRef(0);     // ✅ Cached measured width (card + gap)
-  const initRef = useRef(false);      // ✅ Guard to avoid re-running initial scroll logic
-  const [initialized, setInitialized] = useState(false); // ✅ Hide content until we position it once
-
-  // Track an in-progress animation so we can cancel instantly (prevents stutter if user clicks quickly)
+  const scrollerRef = useRef(null);
+  const gridRef = useRef(null);
+  const cardWidthRef = useRef(0);
+  const initRef = useRef(false);
+  const [initialized, setInitialized] = useState(false);
   const animRef = useRef({ raf: 0, cancel: false });
+  const [index, setIndex] = useState(0); // logical index in [0..total-1], relative to seedOffset
 
-  // ======= CLONE LOGIC (for seamless infinite carousel) =======
-  // We append a small number of items to both ends (head/tail) so when we cross edges we “jump” invisibly.
-  // Fewer clones = smaller DOM footprint while preserving seamless UX.
-  const CLONES = useMemo(() => {
-    if (!items.length) return 0;
-    // Cap clones to 2 to prevent DOM bloat; looks/behaves the same for users.
-    // For very small item counts we still ensure 1 clone minimum.
-    const n = Math.max(1, Math.floor(items.length / 4) || 1);
-    return Math.min(2, n);
-  }, [items.length]);
+  // Keep a sliding window of items keyed by absolute index = (seedOffset + i) % total
+  // We store them in a Map<number, item>
+  const [cache, setCache] = useState(() => {
+    const map = new Map();
+    for (let i = 0; i < initial.length; i++) {
+      const abs = mod(seedOffset + i, Math.max(1, total));
+      map.set(abs, initial[i]);
+    }
+    return map;
+  });
 
-  // ======= EXTENDED ARRAY WITH CLONES =======
-  // extended = [...tail clones, ...items, ...head clones]
-  const extended = useMemo(() => {
-    if (items.length === 0) return [];
-    const head = items.slice(0, CLONES);
-    const tail = items.slice(-CLONES);
-    return [...tail, ...items, ...head];
-  }, [items, CLONES]);
+  // Window we want to keep in memory: current index ± 2 pages
+  const WINDOW_PAGES_BEFORE = 1;
+  const WINDOW_PAGES_AFTER = 2;
 
-  // The “real” starting index points at the first actual item (after left-side clones)
-  const START_INDEX = useMemo(() => (items.length ? CLONES : 0), [items.length, CLONES]);
-  const [index, setIndex] = useState(START_INDEX); // ✅ Current logical index in the extended list
+  const START_INDEX = 0; // we position to the first logical item (already in initial)
 
-  /**
-   * measureCardWidth()
-   * - Calculates the width of a card + the grid gap (in px) using the first rendered card.
-   * - If DOM is not ready, falls back to the props (cardWidth + gap).
-   */
+  // Helper to measure card column width + gap
   const measureCardWidth = () => {
     const grid = gridRef.current;
     if (!grid) return 0;
-    // Find a child with data-card attribute (set below when rendering cards):
     const first = grid.querySelector("div[data-card]");
     if (!first) return 0;
     const rect = first.getBoundingClientRect();
@@ -100,31 +83,27 @@ function TeacherSectionClient({
     return rect.width + gapPx;
   };
 
-  // ======= INITIAL POSITION (BEFORE FIRST PAINT) =======
-  // We place the scroller at the START_INDEX so that left/right scrolls seamlessly.
-  // useLayoutEffect triggers before paint → avoids visible jump.
+  // initial position
   useLayoutEffect(() => {
-    if (initRef.current || extended.length === 0) return;
+    if (initRef.current || total === 0) return;
     const el = scrollerRef.current;
     if (!el) return;
 
-    const w = measureCardWidth() || cardWidth + gap;   // ✅ If measurement fails, use props
+    const w = measureCardWidth() || cardWidth + gap;
     cardWidthRef.current = w;
 
     setIndex(START_INDEX);
-    // Temporarily disable smooth scroll to set an immediate position (no flicker)
     const prev = el.style.scrollBehavior;
     el.style.scrollBehavior = "auto";
-    el.scrollLeft = START_INDEX * w; // ✅ Set initial scrollLeft in pixels
+    el.scrollLeft = START_INDEX * w;
     el.style.scrollBehavior = prev || "";
 
     initRef.current = true;
-    setInitialized(true); // ✅ Reveal content once positioned
+    setInitialized(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [START_INDEX, extended.length]);
+  }, [total]);
 
-  // ======= KEEP INDEX POSITION ON RESIZE =======
-  // If the viewport changes, card width (or gap) may change → we recompute and keep the same index centered.
+  // keep pixel position on resize
   useEffect(() => {
     let frame = 0;
     const onResize = () => {
@@ -136,7 +115,7 @@ function TeacherSectionClient({
         cardWidthRef.current = newW;
         const prev = el.style.scrollBehavior;
         el.style.scrollBehavior = "auto";
-        el.scrollLeft = index * newW; // ✅ Maintain logical index’s pixel position
+        el.scrollLeft = index * newW;
         el.style.scrollBehavior = prev || "";
       });
     };
@@ -147,27 +126,92 @@ function TeacherSectionClient({
     };
   }, [index, cardWidth, gap]);
 
-  /**
-   * jumpWithoutAnim(targetIndex)
-   * - Immediately jump to a target index (used after we hit a clone edge).
-   * - Smooth animation is DISABLED for the jump to make it invisible to users.
-   */
-  const jumpWithoutAnim = (targetIndex) => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const w = cardWidthRef.current || measureCardWidth() || cardWidth + gap;
-    const prev = el.style.scrollBehavior;
-    el.style.scrollBehavior = "auto";
-    el.scrollLeft = targetIndex * w;
-    el.style.scrollBehavior = prev || "";
+  // Fetch a batch by absolute offset [absOffset .. absOffset+limit)
+  const fetchBatch = async (absOffset) => {
+    const url = `${apiHref}?offset=${absOffset}&limit=${pageSize}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return [];
+    const json = await res.json();
+    // json.items (array), json.offset (abs), json.count
+    return json.items || [];
   };
 
-  /**
-   * animateScrollTo
-   * - Smoothly animates from current scrollLeft to targetLeft over 'duration' ms.
-   * - Easing: easeOutCubic
-   * - Cancels any previous RAF if user clicks repeatedly.
-   */
+  // Ensure a logical range [iStart..iEnd] (relative to seed) is present in cache
+  const ensureRange = async (iStart, iEnd) => {
+    if (total === 0) return;
+    const missingOffsets = new Set();
+
+    for (let i = iStart; i <= iEnd; i++) {
+      const abs = mod(seedOffset + i, total);
+      if (!cache.has(abs)) {
+        // compute which page contains this abs
+        const pageStart = Math.floor(abs / pageSize) * pageSize;
+        missingOffsets.add(pageStart);
+      }
+    }
+
+    if (missingOffsets.size === 0) return;
+
+    const newMap = new Map(cache);
+    // fetch in parallel but limit to reasonable number
+    const tasks = Array.from(missingOffsets).slice(0, 5).map(async (absStart) => {
+      const items = await fetchBatch(absStart);
+      for (let j = 0; j < items.length; j++) {
+        const abs = mod(absStart + j, total);
+        newMap.set(abs, items[j]);
+      }
+    });
+
+    await Promise.all(tasks);
+    setCache(newMap);
+  };
+
+  // Prefetch around current window
+  useEffect(() => {
+    if (total === 0) return;
+    const start = Math.max(0, index - WINDOW_PAGES_BEFORE * pageSize);
+    const end = Math.min(total - 1, index + WINDOW_PAGES_AFTER * pageSize);
+    // fire & forget
+    void ensureRange(start, end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, total, pageSize]);
+
+  // Build the currently rendered strip: we render only a “visible” band (one page worth) centered on index.
+  // You can widen this for more offscreen cards.
+  const bandSize = pageSize; // visible band
+  const bandStart = Math.max(0, index);
+  const bandEnd = Math.min(total - 1, bandStart + bandSize - 1);
+
+  const visibleItems = useMemo(() => {
+    if (total === 0) return [];
+    const out = [];
+    for (let i = bandStart; i <= bandEnd; i++) {
+      const abs = mod(seedOffset + i, total);
+      out.push({ abs, item: cache.get(abs) });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bandStart, bandEnd, cache, seedOffset, total]);
+
+  // If an item is missing (not fetched yet), show a lightweight skeleton
+  const CardShell = ({ abs, it }) => {
+    if (it) {
+      return (
+        <div data-card>
+          <PresentationCard p={it} cardHeight={cardHeight} />
+        </div>
+      );
+    }
+    return (
+      <div
+        data-card
+        className="rounded-xl border border-slate-200 bg-slate-50 animate-pulse"
+        style={{ height: cardHeight }}
+        title={`Loading #${abs}`}
+      />
+    );
+  };
+
   const animateScrollTo = (el, targetLeft, duration, onDone) => {
     if (animRef.current.raf) {
       cancelAnimationFrame(animRef.current.raf);
@@ -184,7 +228,7 @@ function TeacherSectionClient({
     }
 
     const t0 = performance.now();
-    const ease = (t) => 1 - Math.pow(1 - t, 3); // ✅ easeOutCubic
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
 
     const step = (now) => {
       if (animRef.current.cancel) return;
@@ -201,102 +245,47 @@ function TeacherSectionClient({
     animRef.current.raf = requestAnimationFrame(step);
   };
 
-  /**
-   * scrollByOneCard(dir)
-   * - dir = +1 (next) or -1 (previous)
-   * - Moves by exactly one card width (including gap), then checks if we crossed into clones.
-   * - If we crossed, it jumps to the equivalent real index to keep the illusion of infinite scroll.
-   */
-  const scrollByOneCard = (dir) => {
+  const jumpTo = (newIdx, smooth = true) => {
+    if (!scrollerRef.current) return;
     const el = scrollerRef.current;
-    if (!el || extended.length === 0) return;
-
     const w = cardWidthRef.current || measureCardWidth() || cardWidth + gap;
-    const next = index + dir;
 
-    setIndex(next);
-    animateScrollTo(el, next * w, Math.max(100, animationMs), () => {
-      if (next < CLONES) {
-        // ✅ We scrolled into the left-side clones: jump forward by items.length
-        const newIndex = next + items.length;
-        setIndex(newIndex);
-        jumpWithoutAnim(newIndex);
-      } else if (next >= CLONES + items.length) {
-        // ✅ We scrolled past the right-side clones: jump back by items.length
-        const newIndex = next - items.length;
-        setIndex(newIndex);
-        jumpWithoutAnim(newIndex);
-      }
-    });
+    // Wrap logical index through total
+    const wrapped = total ? mod(newIdx, total) : 0;
+    setIndex(wrapped);
+
+    const targetLeft = (wrapped - bandStart) * w; // position within the current band
+    if (!smooth) {
+      const prev = el.style.scrollBehavior;
+      el.style.scrollBehavior = "auto";
+      el.scrollLeft = targetLeft;
+      el.style.scrollBehavior = prev || "";
+    } else {
+      animateScrollTo(el, targetLeft, Math.max(100, animationMs));
+    }
+  };
+
+  const scrollByOneCard = (dir) => {
+    if (total === 0) return;
+    jumpTo(index + dir, true);
   };
 
   return (
-    // ======= OUTER SECTION WRAPPER =======
-    <section
-      className="relative z-0 max-w-[1366px] mx-auto px-0 md:px-0 my-10 overflow-x-clip"
-      /**
-       * LAYOUT / WIDTH / RESPONSIVE:
-       * - max-w-[1366px]: ✅ Overall max width of the section. Increase/decrease for wider/narrower layout.
-       * - mx-auto: ✅ Centers the section horizontally.
-       * - my-10: ✅ Vertical margin (top/bottom). Change to my-6/my-16 as needed.
-       * - px-0 md:px-0: ✅ Horizontal padding is 0 on mobile and desktop (you can add px-4, md:px-8, etc.).
-       * - overflow-x-clip: ✅ Prevents horizontal scrollbars and clips overflow.
-       *
-       * MOBILE (starts here): Tailwind is mobile-first. Classes without breakpoint apply to mobile.
-       * DESKTOP: Classes prefixed with md: apply at ≥768px.
-       */
-    >
-      {/* ======= TITLE / HEADING ======= */}
-      <h2
-        className="mb-8 text-center text-3xl font-semibold text-gray-800"
-        /**
-         * TEXT STYLES:
-         * - text-3xl: ✅ Font size. For mobile smaller, change to text-2xl; for bigger desktop, add md:text-4xl.
-         * - font-semibold: ✅ Weight. Use font-bold for heavier.
-         * - text-gray-800: ✅ Color. Swap to text-slate-900, etc.
-         * - mb-8: ✅ Space below heading. Adjust for tighter/looser spacing.
-         * - text-center: ✅ Center-aligned title.
-         *
-         * CHANGE TITLE TEXT ITSELF:
-         * - Controlled by the 'title' prop above (default: "Teachers love these").
-         */
-      >
+    <section className="relative z-0 max-w-[1366px] mx-auto px-0 md:px-0 my-10 overflow-x-clip">
+      <h2 className="mb-8 text-center text-3xl font-semibold text-gray-800">
         {title}
       </h2>
 
       <div className="relative">
-        {/* ======= OVERLAY ARROW BUTTONS (Prev/Next) ======= */}
-        <div
-          className="pointer-events-none absolute top-1/3 left-0 right-0 flex justify-between px-2 z-10"
-          /**
-           * POSITIONING:
-           * - absolute + left-0 right-0: ✅ Stretch overlay across width of carousel.
-           * - top-1/3: ✅ Vertical position (approx one third from the top). Change to top-1/2 for centered.
-           * - flex justify-between: ✅ Space buttons to left/right edges.
-           * - px-2: ✅ Horizontal padding inside overlay.
-           * - z-10: ✅ Ensure buttons float above cards.
-           */
-        >
+        {/* arrows */}
+        <div className="pointer-events-none absolute top-1/3 left-0 right-0 flex justify-between px-2 z-10">
           <button
             type="button"
             aria-label="Previous"
-            onClick={() => scrollByOneCard(-1)} // ✅ Click → move one card left
+            onClick={() => scrollByOneCard(-1)}
             className="pointer-events-auto flex items-center justify-center w-8 h-8 rounded-full bg-[#9500DE] text-white shadow-lg hover:bg-[#7c00b9] focus:outline-none focus:ring-2 focus:ring-[#9500DE]/30"
-            /**
-             * BUTTON SIZE / SHAPE / COLOR:
-             * - w-8 h-8: ✅ Button size. Increase to w-10 h-10 for larger hit area (good for mobile).
-             * - rounded-full: ✅ Circular button.
-             * - bg-[#9500DE]: ✅ Primary background color. Replace hex for brand color.
-             * - hover:bg-[#7c00b9]: ✅ Hover color on desktop.
-             * - text-white: ✅ Icon color.
-             * - shadow-lg: ✅ Elevation. Remove if you want flat design.
-             * - focus:ring-2 focus:ring-[#9500DE]/30: ✅ Accessibility focus styles.
-             *
-             * MOBILE: You can wrap size classes with responsive utilities (e.g., md:w-10 md:h-10) for larger desktop buttons.
-             */
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-              {/* Icon size controlled by width/height props above; change to 24 for bigger chevrons */}
               <path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
             </svg>
           </button>
@@ -304,12 +293,8 @@ function TeacherSectionClient({
           <button
             type="button"
             aria-label="Next"
-            onClick={() => scrollByOneCard(1)} // ✅ Click → move one card right
+            onClick={() => scrollByOneCard(1)}
             className="pointer-events-auto flex items-center justify-center w-8 h-8 rounded-full bg-[#9500DE] text-white shadow hover:bg-[#7c00b9] focus:outline-none focus:ring-2 focus:ring-[#9500DE]/30"
-            /**
-             * Same styling considerations as the Previous button.
-             * Tip: Synchronize both buttons’ sizes for consistent UX across mobile & desktop.
-             */
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
               <path fill="currentColor" d="m8.59 16.59 1.41 1.41 6-6-6-6-1.41 1.41L13.17 12z" />
@@ -317,35 +302,20 @@ function TeacherSectionClient({
           </button>
         </div>
 
-        {/* ======= SCROLLER (HORIZONTAL) ======= */}
+        {/* scroller */}
         <div
           ref={scrollerRef}
           className={`no-scrollbar ${initialized ? "" : "invisible"}`}
-          style={{
-            overflowX: "hidden",               // ✅ Hide native horizontal scrollbar
-            willChange: "scroll-position",     // ✅ Hint for smoother scroll/animation
-          }}
-          /**
-           * VISIBILITY:
-           * - Starts as "invisible" until we've positioned to START_INDEX once; prevents initial jump flash.
-           *
-           * SCROLL BEHAVIOR:
-           * - overflowX: hidden keeps the layout clean; we animate scrollLeft manually via JS.
-           *
-           * MOBILE:
-           * - Nothing special required here; if you want touch-drag, you can allow overflowX: auto (and remove our JS).
-           */
+          style={{ overflowX: "hidden", willChange: "scroll-position" }}
         >
-          {/* ======= GRID OF CARDS (FLOWING HORIZONTALLY) ======= */}
           <div
             ref={gridRef}
             style={{
-              // ✅ These CSS variables reflect component props; adjust props at the top to change global sizes.
-              ["--card-w"]: `${cardWidth}px`,  // width per card column
-              ["--card-h"]: `${cardHeight}px`, // height passed into PresentationCard via prop
-              ["--card-gap"]: `${gap}px`,      // gap between columns
-              ["--left-pad"]: `${leftPad}px`,  // left padding
-              ["--right-pad"]: peekRight ? "0px" : `${leftPad}px`, // reduce right padding to “peek” next card
+              ["--card-w"]: `${cardWidth}px`,
+              ["--card-h"]: `${cardHeight}px`,
+              ["--card-gap"]: `${gap}px`,
+              ["--left-pad"]: `${leftPad}px`,
+              ["--right-pad"]: peekRight ? "0px" : `${leftPad}px`,
             }}
             className={`
               grid grid-flow-col pb-2
@@ -353,55 +323,18 @@ function TeacherSectionClient({
               [grid-auto-columns:var(--card-w)]
               pl-[var(--left-pad)] pr-[var(--right-pad)]
             `}
-            /**
-             * LAYOUT:
-             * - grid-flow-col: ✅ Adds a grid column for each card across the horizontal axis.
-             * - [grid-auto-columns:var(--card-w)]: ✅ Each column width equals --card-w.
-             * - gap-[var(--card-gap)]: ✅ Space between columns.
-             * - pb-2: ✅ Bottom padding (change for more/less space under cards).
-             * - pl/pr: ✅ Left/right padding control; see CSS variables above.
-             *
-             * CHANGE CARD SIZE:
-             * - Prefer changing the props (cardWidth/cardHeight) so grid + card content stay in sync.
-             *
-             * MOBILE:
-             * - If you need smaller card width/height on mobile, you can:
-             *   A) Pass different props based on viewport OR
-             *   B) Replace CSS variables with responsive Tailwind classes (e.g., sm:[grid-auto-columns:280px] md:[grid-auto-columns:320px]).
-             */
           >
-            {extended.map((it, i) => (
-              <div data-card key={`${it.id || it.slug || i}-${i}`}>
-                {/* 
-                  ✅ Each card wrapper. Use data-card for measuring width.
-                  HEIGHT CONTROL:
-                  - The PresentationCard receives cardHeight={cardHeight}. Inspect that component to control internal content (image/text sizes).
-                */}
-                <PresentationCard p={it} cardHeight={cardHeight} />
-              </div>
+            {visibleItems.map(({ abs, item }) => (
+              <CardShell key={abs} abs={abs} it={item} />
             ))}
           </div>
         </div>
 
-        {/* ======= CALL TO ACTION (CTA) BUTTON UNDER CAROUSEL ======= */}
         {showCTA && (
           <div className="mt-12 text-center">
             <Link
-              href={ctaHref} // ✅ Where the CTA goes (change prop above)
+              href={ctaHref}
               className="rounded-full bg-[#9500DE] px-8 py-3 text-white hover:bg-[#7c00b9]"
-              /**
-               * CTA STYLING:
-               * - rounded-full: ✅ Pill-shaped button
-               * - bg-[#9500DE] / hover:bg...: ✅ Button color
-               * - px-8 py-3: ✅ Button padding (increase for a larger button)
-               * - text-white: ✅ Label color
-               *
-               * TEXT:
-               * - Controlled by {ctaLabel} below.
-               *
-               * MOBILE:
-               * - Add responsive sizing if desired: e.g., md:px-10 md:py-4 for larger desktop.
-               */
             >
               {ctaLabel}
             </Link>
@@ -412,4 +345,4 @@ function TeacherSectionClient({
   );
 }
 
-export default memo(TeacherSectionClient); // ✅ memo: avoids re-renders when props don’t change
+export default memo(TeacherSectionClient);

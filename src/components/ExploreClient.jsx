@@ -70,6 +70,7 @@ function compressList(arr = [], maxShow = 3) {
   const head = a.slice(0, maxShow);
   return [...head, `+${a.length - maxShow} more`];
 }
+
 /* ----------------------------------------------------------------------------- */
 
 /* --------------------- tune UX here ---------------------
@@ -77,7 +78,7 @@ function compressList(arr = [], maxShow = 3) {
  * PAGE_SIZE: items per page (also sent to API).
  * 👉 If you change PAGE_SIZE, update server and paginator accordingly.
  */
-const INACTIVITY_MS = 1200; // ✅ Slightly slower so it waits for you to finish typing
+const INACTIVITY_MS = 2000; // ✅ Waits ~2 seconds after user stops typing before searching
 const PAGE_SIZE = 12;       // ✅ Grid uses sm:2 cols, lg:3 cols → 12 keeps rows balanced
 
 /* --------------------- component --------------------- */
@@ -102,10 +103,10 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
   const [showFilters, setShowFilters] = useState(false);
 
   // ====== Loading flags (used for skeletons/transitions) ======
-  const [loading, setLoading] = useState(false);      // ✅ Hard loading (new fetch)
+  const [loading, setLoading] = useState(false);         // ✅ Hard loading (new fetch)
   const [softLoading, setSoftLoading] = useState(false); // ✅ Soft loading (page change)
-  const [typing, setTyping] = useState(false);        // ✅ User is typing (shows tiny loader)
-  const [isPending, startTransition] = useTransition(); // ✅ React concurrent transition (smooth state updates)
+  const [typing, setTyping] = useState(false);           // ✅ User is typing (shows tiny loader)
+  const [isPending, startTransition] = useTransition();  // ✅ React concurrent transition (smooth state updates)
 
   // ====== Refs for abort/debounce/compose/caching ======
   const abortRef = useRef(null);       // ✅ AbortController for in-flight fetch
@@ -229,11 +230,11 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
       setSoftLoading(false);
       setLoading(false);
     } else if (isPageNav) {
-      setSoftLoading(true);   // faded grid (keeping existing items visible)
+      setSoftLoading(true);
       setLoading(false);
     } else {
       setSoftLoading(false);
-      setLoading(true);       // full skeleton grid
+      setLoading(true);
     }
 
     // ✅ Update page & URL immediately (optimistic)
@@ -247,7 +248,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     try {
       lastSearchedQueryRef.current = nextQ;
 
-      // ✅ Server search API (adjust endpoint/body server-side if you change filters)
+      // ✅ Server search API
       const res = await fetch("/api/presentations/search", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -282,8 +283,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         prefetchNeighbors(nextQ, filters, nextPage, json?.total || 0);
       }
     } catch (e) {
-      // optional: toast/log
-      // console.error(e);
+      // optional: console.error(e);
     } finally {
       if (reqIdRef.current === myReqId) {
         setLoading(false);
@@ -321,7 +321,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
             const json = await res.json();
             putCache(key, json);
           }
-        } catch { /* ignore prefetch errors */ }
+        } catch {
+          /* ignore prefetch errors */
+        }
       })
     );
   }
@@ -344,7 +346,10 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
   useEffect(() => {
     const sp = searchParams;
     const urlQ = sp.get("q") || "";
-    const urlPage = Number(sp.get("page") || 1);
+
+    // Read the URL page, but ignore it on first load to ensure page 1 + fresh seed
+    const urlPageRaw = Number(sp.get("page") || 1);
+    const urlPage = firstLoadRef.current ? 1 : urlPageRaw;
 
     const filtersFromUrl = {
       subjects: getAll(sp, "subjects"),
@@ -394,7 +399,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     } else {
       setPage(urlPage);
     }
-  }, [searchParams]); // ⚠️ Keep deps size constant for stability
+  }, [searchParams]);
 
   // ===== Small inline components for loaders =====
   const EqualizerLoader = () => (
@@ -407,10 +412,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
         /* ✅ Equalizer mini loader (right side of search input while typing) */
         .eqbar { display:inline-block; width:4px; height:6px; border-radius:9999px; background:#6b21a8; animation:eqPulse 900ms ease-in-out infinite; }
         @keyframes eqPulse { 0%,100%{height:6px; opacity:0.6;} 50%{height:18px; opacity:1;} }
-        /* TWEAKS:
-           - Change color via background: #6b21a8
-           - Change bar width/height for different look
-           - Adjust animation duration/timing for speed */
       `}</style>
     </div>
   );
@@ -428,9 +429,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
   );
 
   // ===== UI state combining loaders and transitions =====
-  const isBusy = loading || isPending;           // ✅ skeletons or transition pending
-  const showTypingLoader = typing && !loading;   // ✅ tiny equalizer only while typing (not during fetch)
-  const gridClass = softLoading ? "opacity-70 transition-opacity" : ""; // ✅ fade grid slightly during page nav
+  const isBusy = loading || isPending;
+  const showTypingLoader = typing && !loading;
+  const gridClass = softLoading ? "opacity-70 transition-opacity" : "";
 
   // ✅ Show clear button only after a search finished for the current text
   const showClearButton =
@@ -439,17 +440,14 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     !!q &&
     q.trim() === (lastCompletedQueryRef.current || "").trim();
 
-  /* --------------------- NEW: derive banner text + badges ---------------------
-   * Uses COMPLETED query for text + pills. Count uses TOTAL results across pages,
-   * and also shows the current page slice range X–Y of T.
-   */
-  const completedQuery = (lastCompletedQueryRef.current || "").trim(); // ✅ completed query only
+  /* --------------------- derive banner text + badges --------------------- */
+  const completedQuery = (lastCompletedQueryRef.current || "").trim();
   const hasSearch = completedQuery.length > 0;
   const hasFilters =
     (lastFilters?.subjects?.length || 0) +
-      (lastFilters?.grades?.length || 0) +
-      (lastFilters?.topics?.length || 0) +
-      (lastFilters?.sub_topics?.length || 0) > 0;
+    (lastFilters?.grades?.length || 0) +
+    (lastFilters?.topics?.length || 0) +
+    (lastFilters?.sub_topics?.length || 0) > 0;
 
   let bannerTitle = "";
   if (hasSearch && hasFilters) {
@@ -460,12 +458,13 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
     bannerTitle = `Filtered results`;
   }
 
-  // NEW/CHANGED: totals & range (shows all matches, not just current page)
+  // -------- NEW/CHANGED: totals & range --------
   const itemsOnPage = Array.isArray(data?.items) ? data.items.length : 0;
-  const totalMatches = Number.isFinite(data?.total) ? data.total : itemsOnPage; // ✅ prefer API total
+  const totalMatches = Number.isFinite(data?.total) ? data.total : itemsOnPage;
   const startIdx = totalMatches === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const endIdx = totalMatches === 0 ? 0 : (page - 1) * PAGE_SIZE + itemsOnPage;
-  /* ------------------------------------------------------------------------- */
+  const endIdx = totalMatches === 0 ? 0 : Math.min((page - 1) * PAGE_SIZE + itemsOnPage, totalMatches);
+  const totalPages = Math.max(1, Math.ceil((totalMatches || 0) / PAGE_SIZE));
+  /* ------------------------------------------------------------------- */
 
   return (
     <>
@@ -477,9 +476,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
             onChange={(e) => {
               const val = e.target.value;
               setQ(val);
-              if (composingRef.current) return; // IME in progress
-              cacheRef.current = new Map();     // clear cache on new typing
-              scheduleDebounced(val, 1);        // debounce search to page 1
+              if (composingRef.current) return;
+              cacheRef.current = new Map();
+              scheduleDebounced(val, 1);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !composingRef.current) {
@@ -501,7 +500,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
                 runSearch({ q: e.currentTarget.value.trim(), page: 1, mode: "blur" });
               }
             }}
-            onCompositionStart={() => { composingRef.current = true; }} // ✅ IME start
+            onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={(e) => {
               // ✅ IME end → then debounce
               composingRef.current = false;
@@ -516,7 +515,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
           />
           {showTypingLoader ? (
             <div className="absolute right-3 top-1/2 -translate-y-1/2">
-              {/* ✅ Tiny loader appears while typing but before fetch starts */}
+              {/* ✅ Tiny loader while typing */}
               <EqualizerLoader />
             </div>
           ) : showClearButton ? (
@@ -525,7 +524,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
               aria-label="Clear search"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                // Clear the input, cancel any pending debounce, and run a fresh search
+                // Clear input, cancel debounce, and run fresh search
                 if (debounceRef.current) clearTimeout(debounceRef.current);
                 setTyping(false);
                 composingRef.current = false;
@@ -537,9 +536,9 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
               }}
               className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 hover:bg-purple-50 focus:outline-none"
             >
-              {/* simple × icon */}
+              {/* × icon */}
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-500 hover:text-gray-700">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a 1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a 1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a 1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a 1 1 0 0 1 0-1.414Z" clipRule="evenodd" />
               </svg>
             </button>
           ) : null}
@@ -547,23 +546,15 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
 
         <button
           onClick={() => {
-            // ✅ Open filter popup; defaults are derived below from lastFilters or URL
             setShowFilters(true);
           }}
           className="px-8 py-3 border-2 border-purple-600 text-purple-600 rounded-full hover:bg-purple-600 hover:text-white"
         >
-          {/* BUTTON STYLE:
-             - px-8 py-3: size (increase for bigger)
-             - border-2 border-purple-600: outline color
-             - text-purple-600: label color (inverts on hover)
-             - rounded-full: pill; switch to rounded-lg for smaller radius
-             - hover:bg-purple-600 hover:text-white: hover state
-           */}
           Filters
         </button>
       </div>
 
-      {/* ===================== NEW: Results Context Banner ===================== */}
+      {/* ===================== Results Context Banner ===================== */}
       {(hasSearch || hasFilters) && (
         <div className="mx-auto mt-6 w-[90%] sm:w-[680px] md:w-[820px] lg:w-[980px]">
           <div className="flex flex-col gap-2 rounded-2xl border border-purple-200 bg-purple-50/70 px-5 py-4 shadow-sm">
@@ -576,31 +567,27 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
             <div className="text-sm text-purple-700">
               {totalMatches === 0
                 ? "No results"
-                : `Showing ${startIdx}–${endIdx} of ${totalMatches} results`}
+                : `Page ${page} of ${totalPages} • Showing ${startIdx}–${endIdx} of ${totalMatches} results`}
             </div>
 
-            {/* Filter pills (only when filters are present) */}
+            {/* Filter pills (when filters are present) */}
             {hasFilters && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                {/* Subjects */}
                 {compressList(lastFilters.subjects).map((s, i) => (
                   <span key={`subj-${i}`} className="inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-purple-900 ring-1 ring-purple-200">
                     {s}
                   </span>
                 ))}
-                {/* Grades */}
                 {compressList(lastFilters.grades).map((g, i) => (
                   <span key={`grade-${i}`} className="inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-purple-900 ring-1 ring-purple-200">
                     {g}
                   </span>
                 ))}
-                {/* Topics */}
                 {compressList(lastFilters.topics).map((t, i) => (
                   <span key={`topic-${i}`} className="inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-purple-900 ring-1 ring-purple-200">
                     {t}
                   </span>
                 ))}
-                {/* Sub-topics */}
                 {compressList(lastFilters.sub_topics).map((st, i) => (
                   <span key={`subtopic-${i}`} className="inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-purple-900 ring-1 ring-purple-200">
                     {st}
@@ -611,7 +598,7 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
           </div>
         </div>
       )}
-      {/* =================== /NEW: Results Context Banner ====================== */}
+      {/* =================== /Results Context Banner ====================== */}
 
       {/* ===== Results Grid (or Skeleton while busy) ===== */}
       {isBusy && !softLoading ? (
@@ -634,13 +621,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
           userInteractedRef.current = true;
           runSearch({ q: pendingQueryRef.current.trim(), page: n, mode: "page", filters: lastFilters }, "page");
         }}
-        /* 
-          Paginator is controlled:
-          - page: current
-          - total: total items
-          - pageSize: items per page (must match server)
-          - onChange: triggers runSearch with mode "page" (soft loading fades grid)
-        */
       />
 
       {/* ===== Filter Popup (modal) ===== */}
@@ -657,13 +637,6 @@ export default function ExploreClient({ initial, initialQuery, seed }) {
             : urlDefaults
         }
         onApply={onApply}
-        /*
-          PROPS:
-          - defaults: initial state inside popup
-            * uses last applied filters if any; else uses filters from URL on first open
-          - onApply: receives selected filters and triggers a fresh search (page 1)
-          - isOpen/onClose: modal visibility
-        */
       />
     </>
   );

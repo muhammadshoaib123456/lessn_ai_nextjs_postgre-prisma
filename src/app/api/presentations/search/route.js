@@ -47,17 +47,17 @@ const titleCase = (s) =>
     .replace(/\b\w/g,(c)=>c.toUpperCase());
 
 const GRADE_ALIASES = {
-  "Pre-K":["Pre-K","Pre K","Prek","PK","Prekindergarten"],
-  Kindergarten:["Kindergarten","K","KG","Kinder","Kingdergardon"],
-  "First Grade":["First Grade","1st grade"],
-  "Second Grade":["Second Grade","2nd grade"],
-  "Third Grade":["Third Grade","3rd grade"],
-  "Fourth Grade":["Fourth Grade","4th grade"],
-  "Fifth Grade":["Fifth Grade","5th grade"],
-  "Sixth Grade":["Sixth Grade","6th grade"],
-  "Seventh Grade":["Seventh Grade","7th grade"],
-  "Eighth Grade":["Eighth Grade","8th grade"],
-  "High School":["High School"],
+  "Pre-K": ["Pre-K","Pre K","Prek","PK","Prekindergarten"],
+  "Kindergarten": ["Kindergarten","K","KG","Kinder","Kingdergardon"],
+  "First Grade": ["First Grade","1st grade"],
+  "Second Grade": ["Second Grade","2nd grade"],
+  "Third Grade": ["Third Grade","3rd grade"],
+  "Fourth Grade": ["Fourth Grade","4th grade"],
+  "Fifth Grade": ["Fifth Grade","5th grade"],
+  "Sixth Grade": ["Sixth Grade","6th grade"],
+  "Seventh Grade": ["Seventh Grade","7th grade"],
+  "Eighth Grade": ["Eighth Grade","8th grade"],
+  "High School": ["High School"],
 };
 
 function normalizeGrade(raw) {
@@ -66,15 +66,15 @@ function normalizeGrade(raw) {
   if (["pre k","pre-k","prek","pk","prekindergarten"].includes(s)) return "Pre-K";
   if (["k","kg","kinder","kindergarten","kingdergardon"].includes(s)) return "Kindergarten";
   const map = {
-    "1st grade":"First Grade","first grade":"First Grade",
-    "2nd grade":"Second Grade","second grade":"Second Grade",
-    "3rd grade":"Third Grade","third grade":"Third Grade",
-    "4th grade":"Fourth Grade","fourth grade":"Fourth Grade",
-    "5th grade":"Fifth Grade","fifth grade":"Fifth Grade",
-    "6th grade":"Sixth Grade","sixth grade":"Sixth Grade",
-    "7th grade":"Seventh Grade","seventh grade":"Seventh Grade",
-    "8th grade":"Eighth Grade","eighth grade":"Eighth Grade",
-    "high school":"High School",
+    "1st grade": "First Grade", "first grade": "First Grade",
+    "2nd grade": "Second Grade", "second grade": "Second Grade",
+    "3rd grade": "Third Grade", "third grade": "Third Grade",
+    "4th grade": "Fourth Grade", "fourth grade": "Fourth Grade",
+    "5th grade": "Fifth Grade", "fifth grade": "Fifth Grade",
+    "6th grade": "Sixth Grade", "sixth grade": "Sixth Grade",
+    "7th grade": "Seventh Grade", "seventh grade": "Seventh Grade",
+    "8th grade": "Eighth Grade", "eighth grade": "Eighth Grade",
+    "high school": "High School",
   };
   return map[s] || titleCase(raw);
 }
@@ -86,6 +86,18 @@ function expandGradeAliases(values) {
     (GRADE_ALIASES[canon] || [canon]).forEach((x) => out.add(x));
   }
   return Array.from(out);
+}
+
+/* Helper: OR group of lower(col) LIKE %q% across fields */
+function buildQLikeGroup(qLower) {
+  const like = `%${qLower}%`;
+  return Prisma.sql`(
+    lower("subject")   LIKE ${like} OR
+    lower("topic")     LIKE ${like} OR
+    lower("sub_topic") LIKE ${like} OR
+    lower("grade")     LIKE ${like} OR
+    lower("name")      LIKE ${like}
+  )`;
 }
 
 /* --------------- main --------------- */
@@ -107,9 +119,9 @@ export async function POST(req) {
 
     // Extract filters
     const subjectsIn = cleanArr(body.subjects ?? getAll(sp, "subjects")).map(titleCase);
-    const gradesRaw = cleanArr(body.grades ?? getAll(sp, "grades"));
-    const topicsIn  = cleanArr(body.topics ?? getAll(sp, "topics")).map(titleCase);
-    const subsIn    = cleanArr(body.sub_topics ?? getAll(sp, "sub_topics")).map(titleCase);
+    const gradesRaw  = cleanArr(body.grades ?? getAll(sp, "grades"));
+    const topicsIn   = cleanArr(body.topics ?? getAll(sp, "topics")).map(titleCase);
+    const subsIn     = cleanArr(body.sub_topics ?? getAll(sp, "sub_topics")).map(titleCase);
 
     // Grade alias expansion
     const gradesIn = expandGradeAliases(gradesRaw);
@@ -121,7 +133,7 @@ export async function POST(req) {
 
     const limit = Math.min(50, Math.max(1, pageSize));
 
-    // --------- Build a Prisma where object ONCE (stable & safe) ----------
+    // --------- Build a Prisma where object ONCE ----------
     const andFilters = [];
     if (subjectsIn.length) andFilters.push({ OR: subjectsIn.map((s) => ({ subject: { equals: s, mode: "insensitive" } })) });
     if (gradesIn.length)   andFilters.push({ OR: gradesIn.map((g) => ({ grade:   { equals: g, mode: "insensitive" } })) });
@@ -140,36 +152,40 @@ export async function POST(req) {
     }
     const whereObj = andFilters.length ? { AND: andFilters } : {};
 
-    // --------- Count (use Prisma — avoids raw “Object” issues) ----------
-    const total = await prisma.presentation.count({ where: whereObj });
+    // --- Build raw WHERE for ranked path ---
+    const W = [];
+    const subjOr = ciEqOr("subject", subjectsIn);
+    const gradOr = ciEqOr("grade", gradesIn);
+    const topicOr = ciEqOr("topic", topicsIn);
+    const subOr   = ciEqOr("sub_topic", subsIn);
+    if (subjOr) W.push(subjOr);
+    if (gradOr) W.push(gradOr);
+    if (topicOr) W.push(topicOr);
+    if (subOr)   W.push(subOr);
+    const WHERE_FILTERS_SQL = W.length ? Prisma.sql`${Prisma.join(W, Prisma.raw(" AND "))}` : Prisma.sql`TRUE`;
+    const QLIKE_SQL = hasQ ? buildQLikeGroup(qLower) : null;
 
-    // Seeded paging for no-search
-    const pageNum = Math.max(1, Number(page) || 1);
-    let offset = (pageNum - 1) * limit;
-    if (!hasQ && seed && total > 0) {
-      const windows = Math.max(1, total - limit + 1);
-      const hash = Array.from(String(seed)).reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5381);
-      const baseStart = hash % windows;
-      offset = baseStart + (pageNum - 1) * limit;
-      if (offset + limit > total) offset = Math.max(0, total - limit);
+    // --------- Count ----------
+    let total;
+    if (hasQ) {
+      const rows = await prisma.$queryRaw`
+        SELECT COUNT(*)::int AS c
+        FROM "Presentation"
+        WHERE ${WHERE_FILTERS_SQL} AND ${QLIKE_SQL}
+      `;
+      total = Array.isArray(rows) && rows.length ? Number(rows[0].c) : 0;
+    } else {
+      total = await prisma.presentation.count({ where: whereObj });
     }
 
-    // Try ranked (pg_trgm) only when user typed something
+    // Paging base
+    const pageNum = Math.max(1, Number(page) || 1);
+
+    // Try ranked search when user typed something
     let itemsRaw = null;
     if (hasQ) {
+      const offset = (pageNum - 1) * limit;
       try {
-        // Additionally build raw WHERE for ranked path (same filters)
-        const W = [];
-        const subjOr = ciEqOr("subject", subjectsIn);
-        const gradOr = ciEqOr("grade", gradesIn);
-        const topicOr = ciEqOr("topic", topicsIn);
-        const subOr   = ciEqOr("sub_topic", subsIn);
-        if (subjOr) W.push(subjOr);
-        if (gradOr) W.push(gradOr);
-        if (topicOr) W.push(topicOr);
-        if (subOr)   W.push(subOr);
-        const WHERE_SQL = W.length ? Prisma.sql`${Prisma.join(W, Prisma.raw(" AND "))}` : Prisma.sql`TRUE`;
-
         itemsRaw = await prisma.$queryRaw`
           WITH candidates AS (
             SELECT
@@ -183,7 +199,7 @@ export async function POST(req) {
                 similarity(lower(name), ${qLower})
               ) AS sim_max
             FROM "Presentation"
-            WHERE ${WHERE_SQL}
+            WHERE ${WHERE_FILTERS_SQL} AND ${QLIKE_SQL}
             ORDER BY sim_max DESC
             LIMIT 2000
           ),
@@ -216,31 +232,89 @@ export async function POST(req) {
           OFFSET ${offset} LIMIT ${limit};
         `;
       } catch {
-        itemsRaw = null; // fall back below
+        itemsRaw = null;
+      }
+
+      if (!itemsRaw) {
+        itemsRaw = await prisma.presentation.findMany({
+          where: whereObj,
+          orderBy: [{ id: "asc" }],
+          take: limit,
+          skip: Math.max(0, (pageNum - 1) * limit),
+          select: {
+            id: true, slug: true, name: true,
+            subject: true, grade: true, topic: true, sub_topic: true,
+            thumbnail: true, thumbnail_alt_text: true,
+          },
+        });
+      }
+    } else {
+      // --- NO-SEARCH PATH: seeded rotation with wrap-around ---
+      if (total === 0) {
+        itemsRaw = [];
+      } else {
+        let baseStart = 0;
+        if (seed) {
+          const windows = Math.max(1, total - limit + 1);
+          const hash = Array.from(String(seed)).reduce(
+            (h, c) => (h * 33 + c.charCodeAt(0)) >>> 0,
+            5381
+          );
+          baseStart = hash % windows;
+        }
+
+        const displayedBefore = (pageNum - 1) * limit;
+        const remaining = Math.max(0, total - displayedBefore);
+        const pageSizeForThisPage = Math.min(limit, remaining);
+
+        if (pageSizeForThisPage === 0) {
+          itemsRaw = [];
+        } else {
+          const offsetPos = baseStart + displayedBefore;
+          const offsetMod = offsetPos % total;
+
+          const part1Count = Math.min(pageSizeForThisPage, total - offsetMod);
+          const part2Count = pageSizeForThisPage - part1Count;
+
+          const selectFields = {
+            id: true, slug: true, name: true,
+            subject: true, grade: true, topic: true, sub_topic: true,
+            thumbnail: true, thumbnail_alt_text: true,
+          };
+
+          const tailPromise = prisma.presentation.findMany({
+            where: whereObj,
+            orderBy: { id: "asc" },
+            skip: offsetMod,
+            take: part1Count,
+            select: selectFields,
+          });
+
+          if (part2Count > 0) {
+            const [tailItems, headItems] = await Promise.all([
+              tailPromise,
+              prisma.presentation.findMany({
+                where: whereObj,
+                orderBy: { id: "asc" },
+                skip: 0,
+                take: part2Count,
+                select: selectFields,
+              }),
+            ]);
+            itemsRaw = tailItems.concat(headItems);
+          } else {
+            itemsRaw = await tailPromise;
+          }
+        }
       }
     }
 
-    if (!itemsRaw) {
-      // Prisma fallback
-      itemsRaw = await prisma.presentation.findMany({
-        where: whereObj,
-        orderBy: [{ id: "asc" }],
-        take: Number(limit),
-        skip: Math.max(0, offset),
-        select: {
-          id: true, slug: true, name: true,
-          subject: true, grade: true, topic: true, sub_topic: true,
-          thumbnail: true, thumbnail_alt_text: true,
-        },
-      });
-    }
-
-    const items = itemsRaw.map((i) => ({
+    const items = (itemsRaw || []).map((i) => ({
       ...i,
       thumbnail: extractThumbSrc(i.thumbnail),
     }));
 
-    // Aggregates optional
+    // Aggregates (optional)
     let aggregates = null;
     if (withAggregates) {
       const [subjectsAgg, gradesAgg, topicsAgg, subtopicsAgg] = await Promise.all([

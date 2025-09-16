@@ -546,3 +546,6 @@ const Header = () => {
 };
 
 export default Header;
+
+
+// ok this is react project with tailwind css and i want that u convert it into fully nextjs and don change the ui and logic ok and make sure nextjs project will be fully scalable and fast and reliable in everyway and make sure web sockets works perfectly like when connection established so it dont end like u can check the logic in code so u better ubderstand and also make sure restapi works correctly because in this project python flask api is used which is deployed already and my frontend fetch data from that like generate oulines and making presentations and grades data and everything so review full project line by line and give me back fully correct code with exact logic and ui and make sure its in nextjs and dont use typescript ok and give me full project by ore focus on websocket connection and api call ok now reviw and give me back zip file in which whole code convert into next js

@@ -12,28 +12,6 @@ async function getData(slug) {
   if (!res.ok) return null;
   return res.json();
 }
-async function getAllPresentations() {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "";
-  const pageSize = 1000;
-  let page = 1;
-  const all = [];
-  const MAX_PAGES = 1000000;
-  while (page <= MAX_PAGES) {
-    const res = await fetch(`${base}/api/presentations/search`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ q: "", subjects: [], grades: [], page, pageSize }),
-    });
-    if (!res.ok) break;
-    const json = await res.json();
-    const items = Array.isArray(json?.items) ? json.items : [];
-    all.push(...items);
-    if (items.length < pageSize) break;
-    page += 1;
-  }
-  return all;
-}
 
 // ---------- metadata ----------
 export async function generateMetadata({ params }) {
@@ -50,6 +28,9 @@ export async function generateMetadata({ params }) {
 // ---------- auth ----------
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+
+// ---------- DB for slider seed/initial ----------
+import { prisma } from "@/lib/prisma";
 
 // ---------- sanitization ----------
 import DOMPurify from "isomorphic-dompurify";
@@ -70,14 +51,6 @@ function prepareHtml(html) {
 }
 
 // ---------- utils ----------
-function fisherYatesShuffle(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 function appendQuery(url, params) {
   try {
     const u = new URL(url);
@@ -88,24 +61,30 @@ function appendQuery(url, params) {
   }
 }
 
+const SLIDER_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  subject: true,
+  grade: true,
+  topic: true,
+  sub_topic: true,
+  thumbnail: true,
+  thumbnail_alt_text: true,
+};
+
 export default async function PresentationPage({ params }) {
   const { slug } = await params;
 
-  // Parallelized SSR work
-  const [p, session, all] = await Promise.all([
+  // Parallelized SSR work (no massive "getAllPresentations" scan anymore)
+  const [p, session] = await Promise.all([
     getData(slug),
     getServerSession(authOptions),
-    getAllPresentations(),
   ]);
 
   if (!p) return <div className="max-w-[960px] mx-auto p-6">Not found</div>;
 
-  // Randomize “View More Content” on every server render/refresh
-  const sliderItems = fisherYatesShuffle(
-    (all || []).filter((it) => it?.slug !== p.slug)
-  ).slice(0, 12);
-
-  // Build Google Slides embed URL (keep controls/slider)
+  // ---- Build Google Slides embed URL (keep controls/slider) ----
   let embedUrl = "";
   if (p.presentation_view_link) {
     const m = String(p.presentation_view_link).match(/src="([^"]+)"/i);
@@ -129,6 +108,41 @@ export default async function PresentationPage({ params }) {
   const hasAnyButtons = Boolean(
     p.download_pdf_url || p.download_ppt_url || p.slides_export_link_url
   );
+
+  // ---- Slider: same behavior as your TeacherSection.jsx (server-seeded + API-backed) ----
+  const pageSize = 24;
+  const total = await prisma.presentation.count();
+
+  let seedOffset = 0;
+  let initial = [];
+  if (total > 0) {
+    seedOffset = Math.floor(Math.random() * total);
+    if (seedOffset + pageSize <= total) {
+      initial = await prisma.presentation.findMany({
+        orderBy: { id: "asc" },
+        skip: seedOffset,
+        take: pageSize,
+        select: SLIDER_SELECT,
+      });
+    } else {
+      const takeA = total - seedOffset;
+      const a = await prisma.presentation.findMany({
+        orderBy: { id: "asc" },
+        skip: seedOffset,
+        take: takeA,
+        select: SLIDER_SELECT,
+      });
+      const b = await prisma.presentation.findMany({
+        orderBy: { id: "asc" },
+        skip: 0,
+        take: pageSize - takeA,
+        select: SLIDER_SELECT,
+      });
+      initial = [...a, ...b];
+    }
+  }
+
+  const normalizedInitial = initial.map((r) => ({ ...r, subtopic: r.sub_topic ?? null }));
 
   return (
     <>
@@ -235,10 +249,14 @@ export default async function PresentationPage({ params }) {
         </div>
       </div>
 
-      {/* Randomized on each SSR render */}
+      {/* Server-seeded, API-backed slider — identical behavior to your TeacherSection.jsx */}
       <section className="w-full px-4 sm:px-6 lg:px-12 py-10 bg-white">
         <TeacherSectionClient
-          items={sliderItems}
+          initial={normalizedInitial}
+          total={total}
+          seedOffset={seedOffset}
+          pageSize={pageSize}
+          apiHref="/api/presentations/slider"
           title="View More Content"
           showCTA={false}
         />
