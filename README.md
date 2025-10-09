@@ -18,10 +18,9 @@ This guide will help you set up the project locally with **PostgreSQL, Prisma, a
 ---
 
 ## 📦 1. Install Dependencies
- 
-\`\`\`bash  
+  
 npm install  
-\`\`\`  
+
 
 ---
 
@@ -34,12 +33,12 @@ Update the values according to your PostgreSQL credentials, SMTP settings, and p
 ### 🔹 Database
 
   
-\`\`\`env  
+env  
 # Format:  
 # postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public  
 
 DATABASE_URL="postgresql://myuser:test123@localhost:5432/my_db?schema=public"  
-\`\`\`  
+  
 
 
 ---
@@ -47,24 +46,23 @@ DATABASE_URL="postgresql://myuser:test123@localhost:5432/my_db?schema=public"
 ### 🔹 NextAuth (Authentication)
 
  
-\`\`\`env  
+
 NEXTAUTH_URL="http://localhost:3002"   # URL where your app runs  
 NEXTAUTH_SECRET=your-secret-key        # generate via: openssl rand -base64 32  
-\`\`\`  
+
 
 
 ---
 
 ### 🔹 SMTP (Brevo / Sendinblue)
 
- 
-\`\`\`env  
+   
 SMTP_HOST="smtp-relay.brevo.com"  
 SMTP_PORT=587  
 SMTP_USER=your-brevo-login-email       # OR SMTP login from Brevo dashboard  
 SMTP_PASS=your-brevo-smtp-key          # NOT your account password!  
 SMTP_FROM="Your Name <your-verified-email@example.com>"  
-\`\`\`  
+
 
 
 ---
@@ -72,9 +70,9 @@ SMTP_FROM="Your Name <your-verified-email@example.com>"
 ### 🔹 Public Base URL
 
   
-\`\`\`env  
+ 
 NEXT_PUBLIC_BASE_URL="http://localhost:3002"  
-\`\`\`  
+
 
 
 ---
@@ -84,11 +82,11 @@ NEXT_PUBLIC_BASE_URL="http://localhost:3002"
 You must create a PostgreSQL database and user manually before adding credentials:
 
 
-\`\`\`sql  
+sql  
 CREATE DATABASE my_db;  
 CREATE USER my_user WITH PASSWORD '12345'; -- choose your own password  
 GRANT ALL PRIVILEGES ON DATABASE my_db TO my_user;  
-\`\`\`  
+ 
 
 
 ---
@@ -97,27 +95,24 @@ GRANT ALL PRIVILEGES ON DATABASE my_db TO my_user;
 
 Generate Prisma client:  
 
- 
-\`\`\`bash  
+  
 npx prisma generate  
-\`\`\`  
+
 
 
 Apply migrations:  
 
 If you already have migration files:  
 
- 
-\`\`\`bash  
+   
 npx prisma migrate deploy  
-\`\`\`  
+
 
 
 If you don’t have migrations yet:  
- 
-\`\`\`bash  
+  
 npx prisma migrate dev --name init  
-\`\`\`  
+
 
 
 ---
@@ -125,9 +120,9 @@ npx prisma migrate dev --name init
 ## 📂 4. Import CSV Data
 
 
-\`\`\`bash  
+
 node ./scripts/import-csv.js ./public/final-seo.csv  
-\`\`\`  
+
 
 
 📝 Adjust the path (`./public/final-seo.csv`) if your CSV file is in a different location.
@@ -137,9 +132,9 @@ node ./scripts/import-csv.js ./public/final-seo.csv
 ## ▶️ 5. Start Development Server
 
  
-\`\`\`bash  
+ 
 npm run dev  
-\`\`\`  
+
 
 
 Your Next.js dev server will be available at:  
