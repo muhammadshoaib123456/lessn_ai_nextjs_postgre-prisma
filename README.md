@@ -36,27 +36,15 @@ Update the values according to your PostgreSQL credentials, SMTP settings, and p
 env  
 # Format:  
 ### postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public  
-
 DATABASE_URL="postgresql://myuser:test123@localhost:5432/my_db?schema=public"  
   
 
-
----
-
 ### 🔹 NextAuth (Authentication)
-
- 
-
 NEXTAUTH_URL="http://localhost:3002"   # URL where your app runs  
 NEXTAUTH_SECRET=your-secret-key        # generate via: openssl rand -base64 32  
 
 
-
----
-
 ### 🔹 SMTP (Brevo / Sendinblue)
-
-   
 SMTP_HOST="smtp-relay.brevo.com"  
 SMTP_PORT=587  
 SMTP_USER=your-brevo-login-email       # OR SMTP login from Brevo dashboard  
@@ -64,15 +52,8 @@ SMTP_PASS=your-brevo-smtp-key          # NOT your account password!
 SMTP_FROM="Your Name <your-verified-email@example.com>"  
 
 
-
----
-
 ### 🔹 Public Base URL
-
-  
- 
 NEXT_PUBLIC_BASE_URL="http://localhost:3002"  
-
 
 
 ---
@@ -80,49 +61,36 @@ NEXT_PUBLIC_BASE_URL="http://localhost:3002"
 ⚠️ Important Notes  
 
 You must create a PostgreSQL database and user manually before adding credentials:
+you can setup database through pgadmin as well
 
+sql 
 
-sql  
-CREATE DATABASE my_db;  
-CREATE USER my_user WITH PASSWORD '12345'; -- choose your own password  
-GRANT ALL PRIVILEGES ON DATABASE my_db TO my_user;  
+# CREATE DATABASE my_db;  
+# CREATE USER my_user WITH PASSWORD '12345';          
+# GRANT ALL PRIVILEGES ON DATABASE my_db TO my_user;  
  
+ u can set your own password and db name and run above commands
 
 
 ---
 
 ## 🛠️ 3. Setup Prisma
 
-Generate Prisma client:  
-
-  
-npx prisma generate  
-
+Generate Prisma client:   
+# npx prisma generate  
 
 
 Apply migrations:  
-
-If you already have migration files:  
-
-   
-npx prisma migrate deploy  
+If you already have migration files:    
+# npx prisma migrate deploy  
 
 
+If you don’t have migrations yet:   
+# npx prisma migrate dev --name init  
 
-If you don’t have migrations yet:  
-  
-npx prisma migrate dev --name init  
-
-
-
----
 
 ## 📂 4. Import CSV Data
-
-
-
-node ./scripts/import-csv.js ./public/final-seo.csv  
-
+# node ./scripts/import-csv.js ./public/final-seo.csv  
 
 
 📝 Adjust the path (`./public/final-seo.csv`) if your CSV file is in a different location.
@@ -130,12 +98,8 @@ node ./scripts/import-csv.js ./public/final-seo.csv
 ---
 
 ## ▶️ 5. Start Development Server
-
  
- 
-npm run dev  
-
-
+# npm run dev  
 
 Your Next.js dev server will be available at:  
 👉 http://localhost:3002  
