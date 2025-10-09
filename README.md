@@ -35,7 +35,7 @@ Update the values according to your PostgreSQL credentials, SMTP settings, and p
   
 env  
 # Format:  
-# postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public  
+### postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public  
 
 DATABASE_URL="postgresql://myuser:test123@localhost:5432/my_db?schema=public"  
   
